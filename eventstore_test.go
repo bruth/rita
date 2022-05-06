@@ -177,8 +177,9 @@ func TestEventStore(t *testing.T) {
 
 	for i, test := range tests {
 		t.Run(test.Name, func(t *testing.T) {
-			// Recreate store each time.
+			// Recreate the store for each test.
 			_ = r.DeleteEventStore("orders")
+
 			es, err := r.CreateEventStore(&EventStoreConfig{
 				Name:    "orders",
 				Storage: nats.MemoryStorage,
@@ -186,7 +187,6 @@ func TestEventStore(t *testing.T) {
 			is.NoErr(err)
 
 			subject := fmt.Sprintf("orders.%d", i)
-			t.Log(subject)
 			test.Run(t, es, subject)
 		})
 	}
