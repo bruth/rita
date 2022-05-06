@@ -171,22 +171,18 @@ func TestEventStore(t *testing.T) {
 	defer shutdownNatsServer(srv)
 
 	nc, _ := nats.Connect(srv.ClientURL())
-	js, _ := nc.JetStream()
+
+	r, err := New(nc)
+	is.NoErr(err)
 
 	for i, test := range tests {
 		t.Run(test.Name, func(t *testing.T) {
-			// Recreate stream each time.
-			_ = js.DeleteStream("orders")
-			_, err := js.AddStream(&nats.StreamConfig{
-				Name: "orders",
-				Subjects: []string{
-					"orders.>",
-				},
+			// Recreate store each time.
+			_ = r.DeleteEventStore("orders")
+			es, err := r.CreateEventStore(&EventStoreConfig{
+				Name:    "orders",
 				Storage: nats.MemoryStorage,
 			})
-			is.NoErr(err)
-
-			es, err := NewEventStore(nc, "orders")
 			is.NoErr(err)
 
 			subject := fmt.Sprintf("orders.%d", i)

@@ -159,22 +159,7 @@ type natsStoredMsg struct {
 	Sequence uint64 `json:"seq"`
 }
 
-// NewEventStore initializes a new interface to a NATS-based event store. Each store
-// is tied to a stream.
-func NewEventStore(nc *nats.Conn, stream string) (EventStore, error) {
-	js, err := nc.JetStream()
-	if err != nil {
-		return nil, err
-	}
-
-	return &natsEventStore{
-		stream: stream,
-		nc:     nc,
-		js:     js,
-	}, nil
-}
-
-type natsEventStore struct {
+type eventStore struct {
 	stream string
 	nc     *nats.Conn
 	js     nats.JetStream
@@ -182,7 +167,7 @@ type natsEventStore struct {
 
 // lastSeqForSubject queries the JS API to identify the current latest sequence for a subject.
 // This is used as an best-guess indicator of the current end of the even history.
-func (s *natsEventStore) lastMsgForSubject(ctx context.Context, subject string) (*natsStoredMsg, error) {
+func (s *eventStore) lastMsgForSubject(ctx context.Context, subject string) (*natsStoredMsg, error) {
 	rsubject := fmt.Sprintf("$JS.API.STREAM.MSG.GET.%s", s.stream)
 
 	data, _ := json.Marshal(&natsGetMsgRequest{
@@ -210,7 +195,7 @@ func (s *natsEventStore) lastMsgForSubject(ctx context.Context, subject string) 
 	return rep.Message, nil
 }
 
-func (s *natsEventStore) Load(ctx context.Context, subject string, opts ...LoadOption) ([]*Event, uint64, error) {
+func (s *eventStore) Load(ctx context.Context, subject string, opts ...LoadOption) ([]*Event, uint64, error) {
 	// Configure opts.
 	var o loadOpts
 	for _, opt := range opts {
@@ -278,7 +263,7 @@ func (s *natsEventStore) Load(ctx context.Context, subject string, opts ...LoadO
 	return events, lastMsg.Sequence, nil
 }
 
-func (s *natsEventStore) Append(ctx context.Context, subject string, event *Event, opts ...AppendOption) (uint64, error) {
+func (s *eventStore) Append(ctx context.Context, subject string, event *Event, opts ...AppendOption) (uint64, error) {
 	// Configure opts.
 	var o appendOpts
 	for _, opt := range opts {
@@ -320,4 +305,83 @@ func (s *natsEventStore) Append(ctx context.Context, subject string, event *Even
 	}
 
 	return ack.Sequence, nil
+}
+
+type EventStoreManager interface {
+	EventStore(name string) EventStore
+	CreateEventStore(config *EventStoreConfig) (EventStore, error)
+	UpdateEventStore(config *EventStoreConfig) error
+	DeleteEventStore(name string) error
+}
+
+// EventStoreConfig is a subset of the nats.StreamConfig for the purpose of creating
+// purpose-built streams for an event store.
+type EventStoreConfig struct {
+	// Name of the event store and underlying stream.
+	Name string
+	// Description associated with the event store.
+	Description string
+	// Subjects to associated with the stream. If not specified, it will default to
+	// the name plus the variadic wildcard, e.g. "orders.>"
+	Subjects []string
+	// Storage for the stream.
+	Storage nats.StorageType
+	// Replicas of the stream.
+	Replicas int
+	// Placement of the stream replicas.
+	Placement *nats.Placement
+}
+
+type eventStoreManager struct {
+	nc *nats.Conn
+	js nats.JetStreamContext
+}
+
+func (m *eventStoreManager) EventStore(name string) EventStore {
+	return &eventStore{
+		stream: name,
+		nc:     m.nc,
+		js:     m.js,
+	}
+}
+
+func (m *eventStoreManager) CreateEventStore(config *EventStoreConfig) (EventStore, error) {
+	subjects := config.Subjects
+	if len(subjects) == 0 {
+		subjects = []string{fmt.Sprintf("%s.>", config.Name)}
+	}
+
+	_, err := m.js.AddStream(&nats.StreamConfig{
+		Name:        config.Name,
+		Description: config.Description,
+		Subjects:    subjects,
+		Storage:     config.Storage,
+		Replicas:    config.Replicas,
+		Placement:   config.Placement,
+		DenyDelete:  true,
+		DenyPurge:   true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return m.EventStore(config.Name), nil
+}
+
+func (m *eventStoreManager) UpdateEventStore(config *EventStoreConfig) error {
+	_, err := m.js.UpdateStream(&nats.StreamConfig{
+		Name:        config.Name,
+		Description: config.Description,
+		Subjects:    config.Subjects,
+		Storage:     config.Storage,
+		Replicas:    config.Replicas,
+		Placement:   config.Placement,
+		DenyDelete:  true,
+		DenyPurge:   true,
+	})
+	return err
+}
+
+func (m *eventStoreManager) DeleteEventStore(name string) error {
+	return m.js.DeleteStream(name)
 }
