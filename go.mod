@@ -3,7 +3,7 @@ module github.com/bruth/rita
 go 1.18
 
 require (
-	github.com/matryer/is v1.4.0
+	github.com/google/go-cmp v0.5.8
 	github.com/nats-io/nats-server/v2 v2.8.2
 	github.com/nats-io/nats.go v1.15.0
 	github.com/nats-io/nuid v1.0.1

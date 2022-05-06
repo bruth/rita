@@ -7,12 +7,38 @@ import (
 	"testing"
 	"time"
 
-	"github.com/matryer/is"
+	"github.com/google/go-cmp/cmp"
 	"github.com/nats-io/nats-server/v2/server"
 	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nuid"
 )
+
+func newIs(t *testing.T) *Is {
+	return &Is{t}
+}
+
+type Is struct {
+	t *testing.T
+}
+
+func (is *Is) Equal(a, b any) {
+	if d := cmp.Diff(a, b); d != "" {
+		is.t.Error(d)
+	}
+}
+
+func (is *Is) NoErr(err error) {
+	if err != nil {
+		is.t.Error(err)
+	}
+}
+
+func (is *Is) True(t bool) {
+	if !t {
+		is.t.Error("expected true")
+	}
+}
 
 func newNatsServer() *server.Server {
 	opts := natsserver.DefaultTestOptions
@@ -34,45 +60,27 @@ func shutdownNatsServer(s *server.Server) {
 }
 
 func TestEventStore(t *testing.T) {
-	is := is.New(t)
-
-	srv := newNatsServer()
-	defer shutdownNatsServer(srv)
-
-	nc, _ := nats.Connect(srv.ClientURL())
-	js, _ := nc.JetStream()
-	_, err := js.AddStream(&nats.StreamConfig{
-		Name: "orders",
-		Subjects: []string{
-			"orders.>",
-		},
-		Storage: nats.MemoryStorage,
-	})
-	is.NoErr(err)
-
-	store, err := NewEventStore(nc, "orders")
-	is.NoErr(err)
-
-	ctx := context.Background()
+	is := newIs(t)
 
 	tests := []struct {
 		Name string
-		Run  func(t *testing.T, subject string)
+		Run  func(t *testing.T, es EventStore, subject string)
 	}{
 		{
 			"append-load-no-occ",
-			func(t *testing.T, subject string) {
+			func(t *testing.T, es EventStore, subject string) {
+				ctx := context.Background()
 				event1 := &Event{
 					ID:   nuid.Next(),
 					Type: "order-created",
 					Time: time.Now().Local(),
 				}
 
-				seq, err := store.Append(ctx, subject, event1)
+				seq, err := es.Append(ctx, subject, event1)
 				is.NoErr(err)
 				is.Equal(seq, uint64(1))
 
-				events, lseq, err := store.Load(ctx, subject)
+				events, lseq, err := es.Load(ctx, subject)
 				is.NoErr(err)
 
 				is.Equal(seq, lseq)
@@ -88,16 +96,18 @@ func TestEventStore(t *testing.T) {
 		},
 		{
 			"append-load-with-occ",
-			func(t *testing.T, subject string) {
+			func(t *testing.T, es EventStore, subject string) {
+				ctx := context.Background()
+
 				event1 := &Event{
 					ID:   nuid.Next(),
 					Type: "order-created",
 					Time: time.Now().Local(),
 				}
 
-				seq, err := store.Append(ctx, subject, event1, ExpectSequence(0))
+				seq, err := es.Append(ctx, subject, event1, ExpectSequence(0))
 				is.NoErr(err)
-				is.Equal(seq, uint64(2))
+				is.Equal(seq, uint64(1))
 
 				event2 := &Event{
 					ID:   nuid.Next(),
@@ -105,11 +115,11 @@ func TestEventStore(t *testing.T) {
 					Time: time.Now().Local(),
 				}
 
-				seq, err = store.Append(ctx, subject, event2, ExpectSequence(2))
+				seq, err = es.Append(ctx, subject, event2, ExpectSequence(1))
 				is.NoErr(err)
-				is.Equal(seq, uint64(3))
+				is.Equal(seq, uint64(2))
 
-				events, lseq, err := store.Load(ctx, subject)
+				events, lseq, err := es.Load(ctx, subject)
 				is.NoErr(err)
 
 				is.Equal(seq, lseq)
@@ -118,16 +128,18 @@ func TestEventStore(t *testing.T) {
 		},
 		{
 			"append-load-partial",
-			func(t *testing.T, subject string) {
+			func(t *testing.T, es EventStore, subject string) {
+				ctx := context.Background()
+
 				event1 := &Event{
 					ID:   nuid.Next(),
 					Type: "order-created",
 					Time: time.Now().Local(),
 				}
 
-				seq, err := store.Append(ctx, subject, event1, ExpectSequence(0))
+				seq, err := es.Append(ctx, subject, event1, ExpectSequence(0))
 				is.NoErr(err)
-				is.Equal(seq, uint64(4))
+				is.Equal(seq, uint64(1))
 
 				event2 := &Event{
 					ID:   nuid.Next(),
@@ -135,11 +147,11 @@ func TestEventStore(t *testing.T) {
 					Time: time.Now().Local(),
 				}
 
-				seq, err = store.Append(ctx, subject, event2, ExpectSequence(4))
+				seq, err = es.Append(ctx, subject, event2, ExpectSequence(1))
 				is.NoErr(err)
-				is.Equal(seq, uint64(5))
+				is.Equal(seq, uint64(2))
 
-				events, lseq, err := store.Load(ctx, subject, AfterSequence(4))
+				events, lseq, err := es.Load(ctx, subject, AfterSequence(1))
 				is.NoErr(err)
 
 				is.Equal(seq, lseq)
@@ -148,18 +160,38 @@ func TestEventStore(t *testing.T) {
 					ID:   event2.ID,
 					Type: event2.Type,
 					Time: event2.Time,
-					Seq:  5,
+					Seq:  2,
 					Data: []byte{},
 				})
 			},
 		},
 	}
 
+	srv := newNatsServer()
+	defer shutdownNatsServer(srv)
+
+	nc, _ := nats.Connect(srv.ClientURL())
+	js, _ := nc.JetStream()
+
 	for i, test := range tests {
 		t.Run(test.Name, func(t *testing.T) {
+			// Recreate stream each time.
+			js.DeleteStream("orders")
+			_, err := js.AddStream(&nats.StreamConfig{
+				Name: "orders",
+				Subjects: []string{
+					"orders.>",
+				},
+				Storage: nats.MemoryStorage,
+			})
+			is.NoErr(err)
+
+			es, err := NewEventStore(nc, "orders")
+			is.NoErr(err)
+
 			subject := fmt.Sprintf("orders.%d", i)
 			t.Log(subject)
-			test.Run(t, subject)
+			test.Run(t, es, subject)
 		})
 	}
 }
