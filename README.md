@@ -6,13 +6,12 @@ Rita is a toolkit of various event-based and reactive abstractions build on top 
 **NOTE: This package is under development, so breaking changes may be introduced. Feedback is welcome on design suggestions and scope. Please open an issue if you have something to share!**
 
 
-[![GoDoc](GoDoc-Image)](GoDoc-URL) [![ReportCard](ReportCard-Image)](ReportCard-URL) [![GitHub Actions](GitHubActions-Image)](GitHubActions-URL)
+[![GoDoc][GoDoc-Image]][GoDoc-URL] [![ReportCard][ReportCard-Image]][ReportCard-URL] [![GitHub Actions][GitHubActions-Image]][GitHubActions-URL]
 
 [GoDoc-Image]: https://pkg.go.dev/badge/github.com/bruth/rita
 [GoDoc-URL]: https://pkg.go.dev/github.com/bruth/rita
 [ReportCard-Image]: https://goreportcard.com/report/github.com/bruth/rita
 [ReportCard-URL]: https://goreportcard.com/report/github.com/bruth/rita
-
 [GitHubActions-Image]: https://github.com/bruth/rita/actions/workflows/ci.yaml/badge.svg?branch=main
 [GitHubActions-URL]: https://github.com/bruth/rita/actions?query=branch%3Amain
 
