@@ -176,7 +176,7 @@ func TestEventStore(t *testing.T) {
 	for i, test := range tests {
 		t.Run(test.Name, func(t *testing.T) {
 			// Recreate stream each time.
-			js.DeleteStream("orders")
+			_ = js.DeleteStream("orders")
 			_, err := js.AddStream(&nats.StreamConfig{
 				Name: "orders",
 				Subjects: []string{
