@@ -74,15 +74,15 @@ events, lastSeq, err := es.Load("orders.1")
 
 ## Roadmap
 
-- [x] type registry (in progress)
+- [ ] type registry (in progress)
   - transparent mapping from string to type
   - support for labeling types, event, state, command, etc.
   - encoder to/decoder from nats message
-- [x] event store (in progress)
+- [x] event store (alpha)
   - layer on JetStream for event store
   - simple api with event store semantics
   - each store maps to one stream
-- [x] event-sourced state (in progress)
+- [ ] event-sourced state (in progress)
   - model for event-sourced state representations
   - interface for user-implemented type
   - maps to a subject

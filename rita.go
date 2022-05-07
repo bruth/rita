@@ -1,27 +1,38 @@
 package rita
 
-import "github.com/nats-io/nats.go"
+import (
+	"github.com/nats-io/nats.go"
+)
 
-type Rita interface {
-	EventStoreManager
+type Rita struct {
+	Types       *TypeRegistry
+	EventStores *EventStoreManager
+
+	nc *nats.Conn
+	js nats.JetStreamContext
+
+	id    ID
+	clock Clock
 }
 
-type rita struct {
-	*eventStoreManager
-}
-
-func New(nc *nats.Conn) (Rita, error) {
+// New initializes a new Rita instance given a NATS connection and the type registry.
+func New(nc *nats.Conn, tr *TypeRegistry) (*Rita, error) {
 	js, err := nc.JetStream()
 	if err != nil {
 		return nil, err
 	}
 
-	esm := &eventStoreManager{
-		nc: nc,
-		js: js,
+	rt := &Rita{
+		Types: tr,
+		nc:    nc,
+		js:    js,
+		id:    NUID,
+		clock: Time,
 	}
 
-	return &rita{
-		eventStoreManager: esm,
-	}, nil
+	rt.EventStores = &EventStoreManager{
+		rt: rt,
+	}
+
+	return rt, nil
 }

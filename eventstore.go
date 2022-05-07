@@ -12,9 +12,11 @@ import (
 )
 
 const (
-	eventTypeHdr    = "Rita-Event-Type"
-	eventTimeHdr    = "Rita-Event-Time"
-	eventTimeFormat = time.RFC3339Nano
+	eventTypeHdr       = "Rita-Event-Type"
+	eventTimeHdr       = "Rita-Event-Time"
+	eventDataCodecHdr  = "Rita-Event-Data-Codec"
+	eventMetaPrefixHdr = "Rita-Meta-"
+	eventTimeFormat    = time.RFC3339Nano
 )
 
 var (
@@ -22,72 +24,6 @@ var (
 	ErrEventIDRequired   = errors.New("rita: event id required")
 	ErrEventTypeRequired = errors.New("rita: event type required")
 )
-
-// Pack an event into a NATS message. The advantage of using NATS headers
-// is that the server supports creating a consumer that _only_ gets the headers
-// without the data as an optimization for some use cases.
-func packEvent(subject string, event *Event, eventTime time.Time) *nats.Msg {
-	msg := nats.NewMsg(subject)
-	msg.Data = event.Data
-	msg.Header.Set(nats.MsgIdHdr, event.ID)
-	msg.Header.Set(eventTypeHdr, event.Type)
-	msg.Header.Set(eventTimeHdr, eventTime.Format(eventTimeFormat))
-	return msg
-}
-
-// Unpack an event from a NATS message.
-func unpackEvent(msg *nats.Msg) (*Event, error) {
-	md, err := msg.Metadata()
-	if err != nil {
-		return nil, fmt.Errorf("unpack: failed to get metadata: %s", err)
-	}
-
-	eventTime, err := time.Parse(eventTimeFormat, msg.Header.Get(eventTimeHdr))
-	if err != nil {
-		return nil, fmt.Errorf("unpack: failed to parse event time: %s", err)
-	}
-
-	return &Event{
-		ID:   msg.Header.Get(nats.MsgIdHdr),
-		Type: msg.Header.Get(eventTypeHdr),
-		Time: eventTime,
-		Data: msg.Data,
-		Seq:  md.Sequence.Stream,
-	}, nil
-}
-
-// Event is a wrapper type for encoded events.
-type Event struct {
-	// ID of the event. NUID, ULID, XID, or UUID are recommended.
-	// This will be used as the NATS msg ID for de-duplication.
-	ID string
-
-	// Type is a unique name for the event itself.
-	Type string
-
-	// Time is the time of when the event occurred which may be different
-	// from the time the event is appended to the store. If no time is provided,
-	// the current time will be used.
-	Time time.Time
-
-	// Data is the encoded event data.
-	Data []byte
-
-	// Seq is the sequence where this event exists in the stream.
-	Seq uint64
-}
-
-// EventStore provides an event store abstraction on a NATS stream.
-type EventStore interface {
-	// Load fetches all events for a specific subject. This is expected to be a concrete
-	// subject (without wildcards) so that the sequence would be fed in as the expected
-	// sequence for a subsequent append operation.
-	Load(ctx context.Context, subject string, opts ...LoadOption) ([]*Event, uint64, error)
-
-	// Append appends a new event to the subject's event sequence. It returns the resulting
-	// sequence number of the appended event.
-	Append(ctx context.Context, subject string, event *Event, opts ...AppendOption) (uint64, error)
-}
 
 type appendOpts struct {
 	expSeq *uint64
@@ -159,22 +95,131 @@ type natsStoredMsg struct {
 	Sequence uint64 `json:"seq"`
 }
 
-type eventStore struct {
+// EventStore provides event store semantics over a NATS stream.
+type EventStore struct {
+	rt     *Rita
 	stream string
-	nc     *nats.Conn
-	js     nats.JetStream
+}
+
+// Pack an event into a NATS message. The advantage of using NATS headers
+// is that the server supports creating a consumer that _only_ gets the headers
+// without the data as an optimization for some use cases.
+func (s *EventStore) packEvent(subject string, event any) (*nats.Msg, error) {
+	var e *Event
+
+	// Check if pre-wrapped, validate type and data.
+	if x, ok := event.(*Event); ok {
+		if x.Data == nil {
+			return nil, fmt.Errorf("event data is nil")
+		}
+
+		t, err := s.rt.Types.Lookup(x.Data)
+		if err != nil {
+			return nil, err
+		}
+		if x.Type != "" && x.Type != t {
+			return nil, fmt.Errorf("wrong type for event data: %s", x.Type)
+		}
+		x.Type = t
+		e = x
+	} else {
+		t, err := s.rt.Types.Lookup(event)
+		if err != nil {
+			return nil, err
+		}
+
+		e = &Event{
+			Type: t,
+			Data: event,
+		}
+	}
+
+	if v, ok := e.Data.(Validator); ok {
+		if err := v.Validate(); err != nil {
+			return nil, err
+		}
+	}
+
+	// Set ID if empty.
+	if e.ID == "" {
+		e.ID = s.rt.id.New()
+	}
+
+	// Set time if empty.
+	if e.Time.IsZero() {
+		e.Time = s.rt.clock.Now().Local()
+	}
+
+	// Marshal the data.
+	data, err := s.rt.Types.Marshal(e.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	msg := nats.NewMsg(subject)
+	msg.Data = data
+
+	// Map event envelope to NATS header.
+	msg.Header.Set(nats.MsgIdHdr, e.ID)
+	msg.Header.Set(eventTypeHdr, e.Type)
+	msg.Header.Set(eventTimeHdr, e.Time.Format(eventTimeFormat))
+	msg.Header.Set(eventDataCodecHdr, s.rt.Types.codecMime)
+
+	for k, v := range e.Meta {
+		msg.Header.Set(fmt.Sprintf("%s%s", eventMetaPrefixHdr, k), v)
+	}
+
+	return msg, nil
+}
+
+// Unpack an event from a NATS message.
+func (s *EventStore) unpackEvent(msg *nats.Msg) (*Event, error) {
+	eventType := msg.Header.Get(eventTypeHdr)
+
+	data, err := s.rt.Types.UnmarshalType(msg.Data, eventType)
+	if err != nil {
+		return nil, err
+	}
+
+	md, err := msg.Metadata()
+	if err != nil {
+		return nil, fmt.Errorf("unpack: failed to get metadata: %s", err)
+	}
+
+	eventTime, err := time.Parse(eventTimeFormat, msg.Header.Get(eventTimeHdr))
+	if err != nil {
+		return nil, fmt.Errorf("unpack: failed to parse event time: %s", err)
+	}
+
+	meta := make(map[string]string)
+
+	for h := range msg.Header {
+		if strings.HasPrefix(h, eventMetaPrefixHdr) {
+			key := h[len(eventMetaPrefixHdr):]
+			meta[key] = msg.Header.Get(h)
+		}
+	}
+
+	return &Event{
+		ID:   msg.Header.Get(nats.MsgIdHdr),
+		Type: msg.Header.Get(eventTypeHdr),
+		Time: eventTime,
+		Data: data,
+		Meta: meta,
+		Seq:  md.Sequence.Stream,
+	}, nil
 }
 
 // lastSeqForSubject queries the JS API to identify the current latest sequence for a subject.
 // This is used as an best-guess indicator of the current end of the even history.
-func (s *eventStore) lastMsgForSubject(ctx context.Context, subject string) (*natsStoredMsg, error) {
+func (s *EventStore) lastMsgForSubject(ctx context.Context, subject string) (*natsStoredMsg, error) {
 	rsubject := fmt.Sprintf("$JS.API.STREAM.MSG.GET.%s", s.stream)
 
 	data, _ := json.Marshal(&natsGetMsgRequest{
 		LastBySubject: subject,
 	})
 
-	msg, err := s.nc.RequestWithContext(ctx, rsubject, data)
+	msg, err := s.rt.nc.RequestWithContext(ctx, rsubject, data)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +240,10 @@ func (s *eventStore) lastMsgForSubject(ctx context.Context, subject string) (*na
 	return rep.Message, nil
 }
 
-func (s *eventStore) Load(ctx context.Context, subject string, opts ...LoadOption) ([]*Event, uint64, error) {
+// LoadEvents fetches all events for a specific subject. This is expected to be a concrete
+// subject (without wildcards) so that the sequence would be fed in as the expected
+// sequence for a subsequent append operation.
+func (s *EventStore) Load(ctx context.Context, subject string, opts ...LoadOption) ([]*Event, uint64, error) {
 	// Configure opts.
 	var o loadOpts
 	for _, opt := range opts {
@@ -228,7 +276,7 @@ func (s *eventStore) Load(ctx context.Context, subject string, opts ...LoadOptio
 		sopts = append(sopts, nats.DeliverAll())
 	}
 
-	sub, err := s.js.SubscribeSync(subject, sopts...)
+	sub, err := s.rt.js.SubscribeSync(subject, sopts...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -248,7 +296,7 @@ func (s *eventStore) Load(ctx context.Context, subject string, opts ...LoadOptio
 			return nil, 0, err
 		}
 
-		event, err := unpackEvent(msg)
+		event, err := s.unpackEvent(msg)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -263,7 +311,10 @@ func (s *eventStore) Load(ctx context.Context, subject string, opts ...LoadOptio
 	return events, lastMsg.Sequence, nil
 }
 
-func (s *eventStore) Append(ctx context.Context, subject string, event *Event, opts ...AppendOption) (uint64, error) {
+// Append appends a user-defined event to the subject's event sequence. This will wrapped
+// within the Event type implicitly. Alternatively, a pre-wrapped *Event value can be passed.
+// It returns the resulting sequence number of the appended event.
+func (s *EventStore) Append(ctx context.Context, subject string, event any, opts ...AppendOption) (uint64, error) {
 	// Configure opts.
 	var o appendOpts
 	for _, opt := range opts {
@@ -281,22 +332,12 @@ func (s *eventStore) Append(ctx context.Context, subject string, event *Event, o
 		popts = append(popts, nats.ExpectLastSequencePerSubject(*o.expSeq))
 	}
 
-	if event.ID == "" {
-		return 0, ErrEventIDRequired
+	msg, err := s.packEvent(subject, event)
+	if err != nil {
+		return 0, err
 	}
 
-	if event.Type == "" {
-		return 0, ErrEventTypeRequired
-	}
-
-	eventTime := event.Time
-	if eventTime.IsZero() {
-		eventTime = time.Now().Local()
-	}
-
-	msg := packEvent(subject, event, eventTime)
-
-	ack, err := s.js.PublishMsg(msg, popts...)
+	ack, err := s.rt.js.PublishMsg(msg, popts...)
 	if err != nil {
 		if strings.Contains(err.Error(), "wrong last sequence") {
 			return 0, ErrSequenceConflict
@@ -305,13 +346,6 @@ func (s *eventStore) Append(ctx context.Context, subject string, event *Event, o
 	}
 
 	return ack.Sequence, nil
-}
-
-type EventStoreManager interface {
-	EventStore(name string) EventStore
-	CreateEventStore(config *EventStoreConfig) (EventStore, error)
-	UpdateEventStore(config *EventStoreConfig) error
-	DeleteEventStore(name string) error
 }
 
 // EventStoreConfig is a subset of the nats.StreamConfig for the purpose of creating
@@ -332,26 +366,24 @@ type EventStoreConfig struct {
 	Placement *nats.Placement
 }
 
-type eventStoreManager struct {
-	nc *nats.Conn
-	js nats.JetStreamContext
+type EventStoreManager struct {
+	rt *Rita
 }
 
-func (m *eventStoreManager) EventStore(name string) EventStore {
-	return &eventStore{
+func (m *EventStoreManager) Get(name string) *EventStore {
+	return &EventStore{
 		stream: name,
-		nc:     m.nc,
-		js:     m.js,
+		rt:     m.rt,
 	}
 }
 
-func (m *eventStoreManager) CreateEventStore(config *EventStoreConfig) (EventStore, error) {
+func (m *EventStoreManager) Create(config *EventStoreConfig) (*EventStore, error) {
 	subjects := config.Subjects
 	if len(subjects) == 0 {
 		subjects = []string{fmt.Sprintf("%s.>", config.Name)}
 	}
 
-	_, err := m.js.AddStream(&nats.StreamConfig{
+	_, err := m.rt.js.AddStream(&nats.StreamConfig{
 		Name:        config.Name,
 		Description: config.Description,
 		Subjects:    subjects,
@@ -365,11 +397,11 @@ func (m *eventStoreManager) CreateEventStore(config *EventStoreConfig) (EventSto
 		return nil, err
 	}
 
-	return m.EventStore(config.Name), nil
+	return m.Get(config.Name), nil
 }
 
-func (m *eventStoreManager) UpdateEventStore(config *EventStoreConfig) error {
-	_, err := m.js.UpdateStream(&nats.StreamConfig{
+func (m *EventStoreManager) Update(config *EventStoreConfig) error {
+	_, err := m.rt.js.UpdateStream(&nats.StreamConfig{
 		Name:        config.Name,
 		Description: config.Description,
 		Subjects:    config.Subjects,
@@ -382,6 +414,6 @@ func (m *eventStoreManager) UpdateEventStore(config *EventStoreConfig) error {
 	return err
 }
 
-func (m *eventStoreManager) DeleteEventStore(name string) error {
-	return m.js.DeleteStream(name)
+func (m *EventStoreManager) Delete(name string) error {
+	return m.rt.js.DeleteStream(name)
 }

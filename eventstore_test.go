@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/nats-io/nats-server/v2/server"
 	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nuid"
 )
 
 func newIs(t *testing.T) *Is {
@@ -62,21 +60,25 @@ func shutdownNatsServer(s *server.Server) {
 func TestEventStore(t *testing.T) {
 	is := newIs(t)
 
+	type OrderPlaced struct {
+		ID string
+	}
+
+	type OrderShipped struct {
+		ID string
+	}
+
 	tests := []struct {
 		Name string
-		Run  func(t *testing.T, es EventStore, subject string)
+		Run  func(t *testing.T, es *EventStore, subject string)
 	}{
 		{
 			"append-load-no-occ",
-			func(t *testing.T, es EventStore, subject string) {
+			func(t *testing.T, es *EventStore, subject string) {
 				ctx := context.Background()
-				event1 := &Event{
-					ID:   nuid.Next(),
-					Type: "order-created",
-					Time: time.Now().Local(),
-				}
-
-				seq, err := es.Append(ctx, subject, event1)
+				seq, err := es.Append(ctx, subject, &OrderPlaced{
+					ID: "123",
+				})
 				is.NoErr(err)
 				is.Equal(seq, uint64(1))
 
@@ -85,24 +87,25 @@ func TestEventStore(t *testing.T) {
 
 				is.Equal(seq, lseq)
 				is.Equal(len(events), 1)
-				is.Equal(*events[0], Event{
-					ID:   event1.ID,
-					Type: event1.Type,
-					Time: event1.Time,
-					Seq:  1,
-					Data: []byte{},
-				})
+
+				is.True(events[0].ID != "")
+				is.True(!events[0].Time.IsZero())
+				is.Equal(events[0].Type, "order-placed")
+				data, ok := events[0].Data.(*OrderPlaced)
+				is.True(ok)
+				is.Equal(*data, OrderPlaced{ID: "123"})
 			},
 		},
 		{
 			"append-load-with-occ",
-			func(t *testing.T, es EventStore, subject string) {
+			func(t *testing.T, es *EventStore, subject string) {
 				ctx := context.Background()
 
 				event1 := &Event{
-					ID:   nuid.Next(),
-					Type: "order-created",
-					Time: time.Now().Local(),
+					Data: &OrderPlaced{ID: "123"},
+					Meta: map[string]string{
+						"geo": "eu",
+					},
 				}
 
 				seq, err := es.Append(ctx, subject, event1, ExpectSequence(0))
@@ -110,9 +113,7 @@ func TestEventStore(t *testing.T) {
 				is.Equal(seq, uint64(1))
 
 				event2 := &Event{
-					ID:   nuid.Next(),
-					Type: "order-shipped",
-					Time: time.Now().Local(),
+					Data: &OrderShipped{ID: "123"},
 				}
 
 				seq, err = es.Append(ctx, subject, event2, ExpectSequence(1))
@@ -128,26 +129,14 @@ func TestEventStore(t *testing.T) {
 		},
 		{
 			"append-load-partial",
-			func(t *testing.T, es EventStore, subject string) {
+			func(t *testing.T, es *EventStore, subject string) {
 				ctx := context.Background()
 
-				event1 := &Event{
-					ID:   nuid.Next(),
-					Type: "order-created",
-					Time: time.Now().Local(),
-				}
-
-				seq, err := es.Append(ctx, subject, event1, ExpectSequence(0))
+				seq, err := es.Append(ctx, subject, &OrderPlaced{ID: "123"}, ExpectSequence(0))
 				is.NoErr(err)
 				is.Equal(seq, uint64(1))
 
-				event2 := &Event{
-					ID:   nuid.Next(),
-					Type: "order-shipped",
-					Time: time.Now().Local(),
-				}
-
-				seq, err = es.Append(ctx, subject, event2, ExpectSequence(1))
+				seq, err = es.Append(ctx, subject, &OrderShipped{ID: "123"}, ExpectSequence(1))
 				is.NoErr(err)
 				is.Equal(seq, uint64(2))
 
@@ -156,13 +145,7 @@ func TestEventStore(t *testing.T) {
 
 				is.Equal(seq, lseq)
 				is.Equal(len(events), 1)
-				is.Equal(*events[0], Event{
-					ID:   event2.ID,
-					Type: event2.Type,
-					Time: event2.Time,
-					Seq:  2,
-					Data: []byte{},
-				})
+				is.Equal(events[0].Type, "order-shipped")
 			},
 		},
 	}
@@ -172,15 +155,25 @@ func TestEventStore(t *testing.T) {
 
 	nc, _ := nats.Connect(srv.ClientURL())
 
-	r, err := New(nc)
+	tr, err := NewTypeRegistry(map[string]*Type{
+		"order-placed": {
+			Init: func() any { return &OrderPlaced{} },
+		},
+		"order-shipped": {
+			Init: func() any { return &OrderShipped{} },
+		},
+	})
+	is.NoErr(err)
+
+	r, err := New(nc, tr)
 	is.NoErr(err)
 
 	for i, test := range tests {
 		t.Run(test.Name, func(t *testing.T) {
 			// Recreate the store for each test.
-			_ = r.DeleteEventStore("orders")
+			_ = r.EventStores.Delete("orders")
 
-			es, err := r.CreateEventStore(&EventStoreConfig{
+			es, err := r.EventStores.Create(&EventStoreConfig{
 				Name:    "orders",
 				Storage: nats.MemoryStorage,
 			})

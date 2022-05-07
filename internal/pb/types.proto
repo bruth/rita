@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package rita;
+
+option go_package = ".;pb";
+
+import "google/protobuf/timestamp.proto";
+
+// For testing.
+message A {
+  string s = 1; 
+  int32 i = 2;
+  bool b = 3;
+  float f = 4;
+  A a = 5;
+  google.protobuf.Timestamp t = 6;
+}
