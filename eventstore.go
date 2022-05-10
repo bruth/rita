@@ -101,10 +101,9 @@ type EventStore struct {
 	stream string
 }
 
-// Pack an event into a NATS message. The advantage of using NATS headers
-// is that the server supports creating a consumer that _only_ gets the headers
-// without the data as an optimization for some use cases.
-func (s *EventStore) packEvent(subject string, event any) (*nats.Msg, error) {
+// wrapEvent wraps a user-defined event into the Event envelope. It performs
+// validation to ensure all the properties are either defined or defaults are set.
+func (s *EventStore) wrapEvent(event any) (*Event, error) {
 	var e *Event
 
 	// Check if pre-wrapped, validate type and data.
@@ -150,8 +149,15 @@ func (s *EventStore) packEvent(subject string, event any) (*nats.Msg, error) {
 		e.Time = s.rt.clock.Now().Local()
 	}
 
+	return e, nil
+}
+
+// packEvent pack an event into a NATS message. The advantage of using NATS headers
+// is that the server supports creating a consumer that _only_ gets the headers
+// without the data as an optimization for some use cases.
+func (s *EventStore) packEvent(subject string, event *Event) (*nats.Msg, error) {
 	// Marshal the data.
-	data, err := s.rt.Types.Marshal(e.Data)
+	data, err := s.rt.Types.Marshal(event.Data)
 	if err != nil {
 		return nil, err
 	}
@@ -160,19 +166,19 @@ func (s *EventStore) packEvent(subject string, event any) (*nats.Msg, error) {
 	msg.Data = data
 
 	// Map event envelope to NATS header.
-	msg.Header.Set(nats.MsgIdHdr, e.ID)
-	msg.Header.Set(eventTypeHdr, e.Type)
-	msg.Header.Set(eventTimeHdr, e.Time.Format(eventTimeFormat))
+	msg.Header.Set(nats.MsgIdHdr, event.ID)
+	msg.Header.Set(eventTypeHdr, event.Type)
+	msg.Header.Set(eventTimeHdr, event.Time.Format(eventTimeFormat))
 	msg.Header.Set(eventDataCodecHdr, s.rt.Types.codecMime)
 
-	for k, v := range e.Meta {
+	for k, v := range event.Meta {
 		msg.Header.Set(fmt.Sprintf("%s%s", eventMetaPrefixHdr, k), v)
 	}
 
 	return msg, nil
 }
 
-// Unpack an event from a NATS message.
+// unpackEvent unpacks an Event from a NATS message.
 func (s *EventStore) unpackEvent(msg *nats.Msg) (*Event, error) {
 	eventType := msg.Header.Get(eventTypeHdr)
 
@@ -201,12 +207,13 @@ func (s *EventStore) unpackEvent(msg *nats.Msg) (*Event, error) {
 	}
 
 	return &Event{
-		ID:   msg.Header.Get(nats.MsgIdHdr),
-		Type: msg.Header.Get(eventTypeHdr),
-		Time: eventTime,
-		Data: data,
-		Meta: meta,
-		Seq:  md.Sequence.Stream,
+		ID:       msg.Header.Get(nats.MsgIdHdr),
+		Type:     msg.Header.Get(eventTypeHdr),
+		Time:     eventTime,
+		Data:     data,
+		Meta:     meta,
+		Sequence: md.Sequence.Stream,
+		Subject:  msg.Subject,
 	}, nil
 }
 
@@ -303,7 +310,7 @@ func (s *EventStore) Load(ctx context.Context, subject string, opts ...LoadOptio
 
 		events = append(events, event)
 
-		if event.Seq == lastMsg.Sequence {
+		if event.Sequence == lastMsg.Sequence {
 			break
 		}
 	}
@@ -332,7 +339,12 @@ func (s *EventStore) Append(ctx context.Context, subject string, event any, opts
 		popts = append(popts, nats.ExpectLastSequencePerSubject(*o.expSeq))
 	}
 
-	msg, err := s.packEvent(subject, event)
+	e, err := s.wrapEvent(event)
+	if err != nil {
+		return 0, err
+	}
+
+	msg, err := s.packEvent(subject, e)
 	if err != nil {
 		return 0, err
 	}

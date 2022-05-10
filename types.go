@@ -40,8 +40,11 @@ type Event struct {
 	// Metadata associated with the event.
 	Meta map[string]string
 
-	// Seq is the sequence where this event exists in the stream.
-	Seq uint64
+	// Subject is the the subject the event was appended to.
+	Subject string
+
+	// Sequence is the sequence where this event exists in the stream.
+	Sequence uint64
 }
 
 /*

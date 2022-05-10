@@ -3,62 +3,14 @@ package rita
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/nats-io/nats-server/v2/server"
-	natsserver "github.com/nats-io/nats-server/v2/test"
+	"github.com/bruth/rita/testutil"
 	"github.com/nats-io/nats.go"
 )
 
-func newIs(t *testing.T) *Is {
-	return &Is{t}
-}
-
-type Is struct {
-	t *testing.T
-}
-
-func (is *Is) Equal(a, b any) {
-	if d := cmp.Diff(a, b); d != "" {
-		is.t.Error(d)
-	}
-}
-
-func (is *Is) NoErr(err error) {
-	if err != nil {
-		is.t.Error(err)
-	}
-}
-
-func (is *Is) True(t bool) {
-	if !t {
-		is.t.Error("expected true")
-	}
-}
-
-func newNatsServer() *server.Server {
-	opts := natsserver.DefaultTestOptions
-	opts.Port = -1
-	opts.JetStream = true
-	return natsserver.RunServer(&opts)
-}
-
-func shutdownNatsServer(s *server.Server) {
-	var sd string
-	if config := s.JetStreamConfig(); config != nil {
-		sd = config.StoreDir
-	}
-	s.Shutdown()
-	if sd != "" {
-		os.RemoveAll(sd)
-	}
-	s.WaitForShutdown()
-}
-
 func TestEventStore(t *testing.T) {
-	is := newIs(t)
+	is := testutil.NewIs(t)
 
 	type OrderPlaced struct {
 		ID string
@@ -148,10 +100,35 @@ func TestEventStore(t *testing.T) {
 				is.Equal(events[0].Type, "order-shipped")
 			},
 		},
+		{
+			"duplicate-append",
+			func(t *testing.T, es *EventStore, subject string) {
+				ctx := context.Background()
+
+				e := &Event{
+					ID:   NUID.New(),
+					Data: &OrderPlaced{ID: "123"},
+				}
+
+				seq, err := es.Append(ctx, subject, e)
+				is.NoErr(err)
+				is.Equal(seq, uint64(1))
+
+				// Append same event with same ID, expect the same response.
+				seq, err = es.Append(ctx, subject, e)
+				is.NoErr(err)
+				is.Equal(seq, uint64(1))
+
+				// Append same event with same ID, expect the same response... again.
+				seq, err = es.Append(ctx, subject, e)
+				is.NoErr(err)
+				is.Equal(seq, uint64(1))
+			},
+		},
 	}
 
-	srv := newNatsServer()
-	defer shutdownNatsServer(srv)
+	srv := testutil.NewNatsServer()
+	defer testutil.ShutdownNatsServer(srv)
 
 	nc, _ := nats.Connect(srv.ClientURL())
 

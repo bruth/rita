@@ -3,7 +3,7 @@
 
 Rita is a toolkit of various event-based and reactive abstractions build on top of NATS.
 
-**NOTE: This package is under development, so breaking changes may be introduced. Feedback is welcome on design suggestions and scope. Please open an issue if you have something to share!**
+**NOTE: This package is under heavy development, so breaking changes will likely be introduced. Feedback is welcome on API design and scope. Please open an issue if you have something to share!**
 
 
 [![GoDoc][GoDoc-Image]][GoDoc-URL] [![ReportCard][ReportCard-Image]][ReportCard-URL] [![GitHub Actions][GitHubActions-Image]][GitHubActions-URL]
@@ -27,10 +27,34 @@ go get github.com/bruth/rita
 
 ### Setup
 
-Initialize a Rita instance by passing the NATS connection as the only required argument.
+Rita comes with a type registry which provides a [de]serialization transparency as well as providing consistency of usage. Fundamentally, we are defining names and mapping them to concrete types.
+
+Given a couple of types in a domain model:
 
 ```go
-r := rita.New(nc)
+type OrderPlaced struct {}
+type OrderShipped struct {}
+```
+
+We can create a registry, associating names. If the names are intended to be shared and portable across other languages, then some thought should be put into the naming structure. For example, the [CloudEvents spec](https://github.com/cloudevents/spec/blob/v1.0.1/spec.md#type) suggest using the reverse DNS name
+
+```go
+tr, err := rita.NewTypeRegistry(map[string]*rita.Type{
+  "com.example.order-placed": {
+    Init: func() any { return &OrderPlaced{} },
+  },
+  "com.example.order-shipped": {
+    Init: func() any { return &OrderShipped{} },
+  },
+})
+```
+
+Each type currently supports a `Init` function to allocate a new value with any default fields set. The registry also accepts an optional `rita.Codec()` option for overriding the default codec for [de]serialization (which is JSON).
+
+Once the set of types that will be worked with are reigstered, we can initialize a Rita instance by passing the NATS connection and the registry.
+
+```go
+r, err := rita.New(nc, tr)
 ```
 
 ### EventStore
