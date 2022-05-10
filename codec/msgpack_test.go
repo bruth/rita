@@ -31,7 +31,7 @@ func BenchmarkMsgPackMarshal(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		MsgPack.Marshal(v1)
+		_, _ = MsgPack.Marshal(v1)
 	}
 }
 
@@ -64,6 +64,6 @@ func BenchmarkMsgPackUnmarshal(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		MsgPack.Unmarshal(y, &v2)
+		_ = MsgPack.Unmarshal(y, &v2)
 	}
 }

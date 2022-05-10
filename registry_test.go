@@ -6,7 +6,7 @@ import (
 
 	"github.com/bruth/rita/codec"
 	"github.com/bruth/rita/internal/pb"
-	"github.com/matryer/is"
+	"github.com/bruth/rita/testutil"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -59,7 +59,7 @@ func TestNewRegistry(t *testing.T) {
 }
 
 func TestMarshalUnmarshal(t *testing.T) {
-	is := is.New(t)
+	is := testutil.NewIs(t)
 
 	ty := map[string]*Type{
 		"a": {
@@ -87,6 +87,7 @@ func TestMarshalUnmarshal(t *testing.T) {
 
 			// Support both struct value and pointers.
 			tt, err := rt.Lookup(&v1)
+			is.NoErr(err)
 			is.Equal(tt, "a")
 
 			b, err := rt.Marshal(&v1)
@@ -118,7 +119,7 @@ func BenchmarkInit(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		r.Init("a")
+		_, _ = r.Init("a")
 	}
 }
 
@@ -136,6 +137,6 @@ func BenchmarkLookup(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		r.Lookup(v)
+		_, _ = r.Lookup(v)
 	}
 }
