@@ -1,4 +1,4 @@
-package rita
+package id
 
 import (
 	"github.com/google/uuid"

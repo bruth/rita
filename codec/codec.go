@@ -1,22 +1,43 @@
 package codec
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
-	ErrCodecNotRegistered = errors.New("rita: codec not registered")
+	ErrNotRegistered = errors.New("rita: codec not registered")
 
-	Codecs = map[string]Codec{
-		"json":     JSON,
-		"msgpack":  MsgPack,
-		"protobuf": ProtoBuf,
+	Default = JSON
+
+	Codecs = []string{
+		"json",
+		"msgpack",
+		"protobuf",
+		"binary",
 	}
 
-	Mimes = map[string]string{
-		"json":     "application/json",
-		"msgpack":  "application/msgpack",
-		"protobuf": "application/protobuf",
+	Registry = &codecRegistry{
+		m: map[string]Codec{
+			"json":     JSON,
+			"msgpack":  MsgPack,
+			"protobuf": ProtoBuf,
+			"binary":   Binary,
+		},
 	}
 )
+
+type codecRegistry struct {
+	m map[string]Codec
+}
+
+func (c *codecRegistry) Get(name string) (Codec, error) {
+	x, ok := c.m[name]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrNotRegistered, name)
+	}
+	return x, nil
+}
 
 type Codec interface {
 	Marshal(interface{}) ([]byte, error)

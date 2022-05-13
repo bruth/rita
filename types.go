@@ -10,22 +10,15 @@ type Validator interface {
 	Validate() error
 }
 
-/*
-type Message struct {
-	ID   string
-	Time time.Time
-	Type string
-	Data any
-}
-*/
-
 // Event is a wrapper type for encoded events.
 type Event struct {
 	// ID of the event. NUID, ULID, XID, or UUID are recommended.
 	// This will be used as the NATS msg ID for de-duplication.
 	ID string
 
-	// Type is a unique name for the event itself.
+	// Type is a unique name for the event itself. This can be ommitted
+	// if a type registry is being used, otherwise it must be set explicitly
+	// to identity the encoded data.
 	Type string
 
 	// Time is the time of when the event occurred which may be different
@@ -46,18 +39,3 @@ type Event struct {
 	// Sequence is the sequence where this event exists in the stream.
 	Sequence uint64
 }
-
-/*
-type Snapshot struct {
-	// Type name of the serialized data.
-	Type string
-	// Snapshot value itself.
-	Data any
-	// Subject pattern that this snapshot was derived from.
-	Subject string
-	// Sequence of the event last applied to this snapshot.
-	Sequence uint64
-	// Revision of the snapshot.
-	Revision uint64
-}
-*/

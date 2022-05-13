@@ -1,7 +1,7 @@
 # Rita
 
 
-Rita is a toolkit of various event-based and reactive abstractions build on top of NATS.
+Rita is a toolkit of various event-centric and reactive abstractions build on top of NATS.
 
 **NOTE: This package is under heavy development, so breaking changes will likely be introduced. Feedback is welcome on API design and scope. Please open an issue if you have something to share!**
 
@@ -25,9 +25,9 @@ go get github.com/bruth/rita
 
 ## Usage
 
-### Setup
+### Type Registry
 
-Rita comes with a type registry which provides a [de]serialization transparency as well as providing consistency of usage. Fundamentally, we are defining names and mapping them to concrete types.
+Rita comes with an opt-in, but recommended, type registry which provides [de]serialization transparency as well as providing consistency of usage. Fundamentally, we are defining names and mapping them to concrete types.
 
 Given a couple of types in a domain model:
 
@@ -36,7 +36,7 @@ type OrderPlaced struct {}
 type OrderShipped struct {}
 ```
 
-We can create a registry, associating names. If the names are intended to be shared and portable across other languages, then some thought should be put into the naming structure. For example, the [CloudEvents spec](https://github.com/cloudevents/spec/blob/v1.0.1/spec.md#type) suggest using the reverse DNS name
+We can create a registry, associating names. If the names are intended to be shared and portable across other languages, then some thought should be put into the naming structure. For example, the [CloudEvents spec](https://github.com/cloudevents/spec/blob/v1.0.1/spec.md#type) suggest using the reverse DNS name.
 
 ```go
 tr, err := rita.NewTypeRegistry(map[string]*rita.Type{
@@ -49,17 +49,19 @@ tr, err := rita.NewTypeRegistry(map[string]*rita.Type{
 })
 ```
 
-Each type currently supports a `Init` function to allocate a new value with any default fields set. The registry also accepts an optional `rita.Codec()` option for overriding the default codec for [de]serialization (which is JSON).
+Each type currently supports a `Init` function to allocate a new value with any default fields set. The registry also accepts an optional `rita.Codec()` option for overriding the default codec for [de]serialization.
 
-Once the set of types that will be worked with are reigstered, we can initialize a Rita instance by passing the NATS connection and the registry.
+Once the set of types that will be worked with are reigstered, we can initialize a Rita instance by passing the NATS connection and the registry as an option.
 
 ```go
-r, err := rita.New(nc, tr)
+r, err := rita.New(nc, rita.TypeRegistry(tr))
 ```
+
+> **What is the behavior without a type registry?** The expectation is that the type name is explicitly provided and the data is a `[]byte`.
 
 ### EventStore
 
-Create an event store for orders. This will default to a subject of "orders.>"
+Create an event store for orders. This will default to a subject of `orders.>`. *Note, other than a few different defaults to follow the semantics of an event store, the stream is just an vanilla JetStream and can be managed as such.*
 
 ```go
 es, err := r.CreateEventStore(&rita.EventStoreConfig{
@@ -68,37 +70,70 @@ es, err := r.CreateEventStore(&rita.EventStoreConfig{
 })
 ```
 
-Append a couple events to the "orders.1" subject on the stream. If ID or Time are not supplied
-a unique ID and the current time will be used. "ExpectSequence" of zero means no other
+Append an event to the `orders.1` subject on the stream. The _event_ can be a registered value or an `*Event` value. `ExpectSequence` can be set to zero means no other
 events should be associated with this subject yet.
 
 ```go
-seq1, err := es.Append("orders.1", &rita.Event{
-  Type: "order-created",
-  Data: []byte("..."),
-}, rita.ExpectSequence(0))
+seq1, err := es.Append("orders.1", &OrderPlaced{}, rita.ExpectSequence(0))
 ```
 
-Example of setting the ID and Time explicitly for demonstration. Notice the next "ExpectSequence" uses seq1 from the previous append.
+Append an another event, using the previously returned sequence.
 
 ```go
-seq2, err = es.Append("orders.1", &rita.Event{
-  ID: nuid.Next(),
-  Type: "order-shipped",
-  Time: time.Now().Local(),
-  Data: []byte("..."),
-}, rita.ExpectSequence(seq1))
+seq2, err := es.Append("orders.1", &OrderShipped{}, rita.ExpectSequence(seq1))
 ```
 
-Load the events for the subject.
+Load the events for the subject. This returns a slice of `*Event` values where the `Data` value for each event has been pre-allocated based on the `Type` using the registry.
 
 ```go
 events, lastSeq, err := es.Load("orders.1")
 ```
 
-## Roadmap
+The `lastSeq` value indicates the sequence of the last event appended for this subject. If a new event needs to be appended, this should be used with `ExpectSequence`.
 
-- [ ] type registry (in progress)
+### Views
+
+Although event sourcing involves modeling and persisting the state transitions as events, we still need to compute _state_ in order to make decisions when commands are received.
+
+Fundamentally, we have a model of state, and then we need to evolve the state given each event. We can model this as an interface in Go.
+
+```go
+type View interface {
+  Evolve(event any) error
+}
+```
+
+An implementation would then look like:
+
+```go
+type Order struct {
+  // fields..
+}
+
+func (o *Order) Evolve(event any) error {
+  // Switch on the event type and evolve the state.
+  switch e := event.(type) {
+  }
+}
+```
+
+Given this model, we can use the `View` method on `EventStore` for convenience.
+
+```go
+var order Order
+lastSeq, err = es.View("orders.1", &order)
+```
+
+This also works for a cross-cutting view (all orders) using a subject wildcard.
+
+```go
+var orderList OrderList
+lastSeq, err = es.View("orders.*", &orderlist)
+```
+
+## Planned Features
+
+- [x] type registry (beta)
   - transparent mapping from string to type
   - support for labeling types, event, state, command, etc.
   - encoder to/decoder from nats message

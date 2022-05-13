@@ -1,4 +1,4 @@
-package rita
+package clock
 
 import "time"
 

@@ -1,4 +1,4 @@
-package rita
+package types
 
 import (
 	"testing"
@@ -44,7 +44,7 @@ func TestNewRegistry(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			_, err := NewTypeRegistry(map[string]*Type{
+			_, err := NewRegistry(map[string]*Type{
 				"a": {
 					Init: test.Init,
 				},
@@ -69,9 +69,9 @@ func TestMarshalUnmarshal(t *testing.T) {
 		},
 	}
 
-	for k := range codec.Codecs {
+	for _, k := range codec.Codecs {
 		t.Run(k, func(t *testing.T) {
-			rt, err := NewTypeRegistry(ty, Codec(k))
+			rt, err := NewRegistry(ty, Codec(k))
 			is.NoErr(err)
 
 			v1 := pb.A{
@@ -110,7 +110,7 @@ func TestMarshalUnmarshal(t *testing.T) {
 func BenchmarkInit(b *testing.B) {
 	type T struct{}
 
-	r, _ := NewTypeRegistry(map[string]*Type{
+	r, _ := NewRegistry(map[string]*Type{
 		"a": {
 			Init: func() any { return &T{} },
 		},
@@ -126,7 +126,7 @@ func BenchmarkInit(b *testing.B) {
 func BenchmarkLookup(b *testing.B) {
 	type T struct{}
 
-	r, _ := NewTypeRegistry(map[string]*Type{
+	r, _ := NewRegistry(map[string]*Type{
 		"a": {
 			Init: func() any { return &T{} },
 		},

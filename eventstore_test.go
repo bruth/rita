@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/bruth/rita/id"
 	"github.com/bruth/rita/testutil"
+	"github.com/bruth/rita/types"
 	"github.com/nats-io/nats.go"
 )
 
@@ -106,7 +108,7 @@ func TestEventStore(t *testing.T) {
 				ctx := context.Background()
 
 				e := &Event{
-					ID:   NUID.New(),
+					ID:   id.NUID.New(),
 					Data: &OrderPlaced{ID: "123"},
 				}
 
@@ -132,7 +134,7 @@ func TestEventStore(t *testing.T) {
 
 	nc, _ := nats.Connect(srv.ClientURL())
 
-	tr, err := NewTypeRegistry(map[string]*Type{
+	tr, err := types.NewRegistry(map[string]*types.Type{
 		"order-placed": {
 			Init: func() any { return &OrderPlaced{} },
 		},
@@ -142,7 +144,7 @@ func TestEventStore(t *testing.T) {
 	})
 	is.NoErr(err)
 
-	r, err := New(nc, tr)
+	r, err := New(nc, TypeRegistry(tr))
 	is.NoErr(err)
 
 	for i, test := range tests {

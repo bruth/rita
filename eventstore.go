@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	eventTypeHdr       = "Rita-Event-Type"
-	eventTimeHdr       = "Rita-Event-Time"
-	eventDataCodecHdr  = "Rita-Event-Data-Codec"
-	eventMetaPrefixHdr = "Rita-Meta-"
+	eventTypeHdr       = "rita-event-type"
+	eventTimeHdr       = "rita-event-time"
+	eventCodecHdr      = "rita-event-codec"
+	eventMetaPrefixHdr = "rita-meta-"
 	eventTimeFormat    = time.RFC3339Nano
 )
 
@@ -112,7 +112,7 @@ func (s *EventStore) wrapEvent(event any) (*Event, error) {
 			return nil, fmt.Errorf("event data is nil")
 		}
 
-		t, err := s.rt.Types.Lookup(x.Data)
+		t, err := s.rt.types.Lookup(x.Data)
 		if err != nil {
 			return nil, err
 		}
@@ -122,7 +122,7 @@ func (s *EventStore) wrapEvent(event any) (*Event, error) {
 		x.Type = t
 		e = x
 	} else {
-		t, err := s.rt.Types.Lookup(event)
+		t, err := s.rt.types.Lookup(event)
 		if err != nil {
 			return nil, err
 		}
@@ -157,7 +157,7 @@ func (s *EventStore) wrapEvent(event any) (*Event, error) {
 // without the data as an optimization for some use cases.
 func (s *EventStore) packEvent(subject string, event *Event) (*nats.Msg, error) {
 	// Marshal the data.
-	data, err := s.rt.Types.Marshal(event.Data)
+	data, err := s.rt.types.Marshal(event.Data)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +169,7 @@ func (s *EventStore) packEvent(subject string, event *Event) (*nats.Msg, error) 
 	msg.Header.Set(nats.MsgIdHdr, event.ID)
 	msg.Header.Set(eventTypeHdr, event.Type)
 	msg.Header.Set(eventTimeHdr, event.Time.Format(eventTimeFormat))
-	msg.Header.Set(eventDataCodecHdr, s.rt.Types.codecMime)
+	msg.Header.Set(eventCodecHdr, s.rt.types.Codec())
 
 	for k, v := range event.Meta {
 		msg.Header.Set(fmt.Sprintf("%s%s", eventMetaPrefixHdr, k), v)
@@ -182,7 +182,7 @@ func (s *EventStore) packEvent(subject string, event *Event) (*nats.Msg, error) 
 func (s *EventStore) unpackEvent(msg *nats.Msg) (*Event, error) {
 	eventType := msg.Header.Get(eventTypeHdr)
 
-	data, err := s.rt.Types.UnmarshalType(msg.Data, eventType)
+	data, err := s.rt.types.UnmarshalType(msg.Data, eventType)
 	if err != nil {
 		return nil, err
 	}
