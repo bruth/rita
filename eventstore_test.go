@@ -30,8 +30,9 @@ func TestEventStore(t *testing.T) {
 			"append-load-no-occ",
 			func(t *testing.T, es *EventStore, subject string) {
 				ctx := context.Background()
-				seq, err := es.Append(ctx, subject, &OrderPlaced{
-					ID: "123",
+				devent := OrderPlaced{ID: "123"}
+				seq, err := es.Append(ctx, subject, &Event{
+					Data: &devent,
 				})
 				is.NoErr(err)
 				is.Equal(seq, uint64(1))
@@ -47,7 +48,7 @@ func TestEventStore(t *testing.T) {
 				is.Equal(events[0].Type, "order-placed")
 				data, ok := events[0].Data.(*OrderPlaced)
 				is.True(ok)
-				is.Equal(*data, OrderPlaced{ID: "123"})
+				is.Equal(*data, devent)
 			},
 		},
 		{
@@ -86,11 +87,11 @@ func TestEventStore(t *testing.T) {
 			func(t *testing.T, es *EventStore, subject string) {
 				ctx := context.Background()
 
-				seq, err := es.Append(ctx, subject, &OrderPlaced{ID: "123"}, ExpectSequence(0))
+				seq, err := es.Append(ctx, subject, &Event{Data: &OrderPlaced{ID: "123"}}, ExpectSequence(0))
 				is.NoErr(err)
 				is.Equal(seq, uint64(1))
 
-				seq, err = es.Append(ctx, subject, &OrderShipped{ID: "123"}, ExpectSequence(1))
+				seq, err = es.Append(ctx, subject, &Event{Data: &OrderShipped{ID: "123"}}, ExpectSequence(1))
 				is.NoErr(err)
 				is.Equal(seq, uint64(2))
 

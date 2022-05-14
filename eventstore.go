@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bruth/rita/codec"
 	"github.com/nats-io/nats.go"
 )
 
@@ -103,53 +104,45 @@ type EventStore struct {
 
 // wrapEvent wraps a user-defined event into the Event envelope. It performs
 // validation to ensure all the properties are either defined or defaults are set.
-func (s *EventStore) wrapEvent(event any) (*Event, error) {
-	var e *Event
+func (s *EventStore) wrapEvent(event *Event) (*Event, error) {
+	if event.Data == nil {
+		return nil, fmt.Errorf("event data is nil")
+	}
 
-	// Check if pre-wrapped, validate type and data.
-	if x, ok := event.(*Event); ok {
-		if x.Data == nil {
-			return nil, fmt.Errorf("event data is nil")
+	if s.rt.types == nil {
+		if event.Type == "" {
+			return nil, errors.New("event type is not defined")
 		}
-
-		t, err := s.rt.types.Lookup(x.Data)
-		if err != nil {
-			return nil, err
-		}
-		if x.Type != "" && x.Type != t {
-			return nil, fmt.Errorf("wrong type for event data: %s", x.Type)
-		}
-		x.Type = t
-		e = x
 	} else {
-		t, err := s.rt.types.Lookup(event)
+		t, err := s.rt.types.Lookup(event.Data)
 		if err != nil {
 			return nil, err
 		}
 
-		e = &Event{
-			Type: t,
-			Data: event,
+		if event.Type == "" {
+			event.Type = t
+		} else if event.Type != t {
+			return nil, fmt.Errorf("wrong type for event data: %s", event.Type)
 		}
 	}
 
-	if v, ok := e.Data.(Validator); ok {
+	if v, ok := event.Data.(Validator); ok {
 		if err := v.Validate(); err != nil {
 			return nil, err
 		}
 	}
 
 	// Set ID if empty.
-	if e.ID == "" {
-		e.ID = s.rt.id.New()
+	if event.ID == "" {
+		event.ID = s.rt.id.New()
 	}
 
 	// Set time if empty.
-	if e.Time.IsZero() {
-		e.Time = s.rt.clock.Now().Local()
+	if event.Time.IsZero() {
+		event.Time = s.rt.clock.Now().Local()
 	}
 
-	return e, nil
+	return event, nil
 }
 
 // packEvent pack an event into a NATS message. The advantage of using NATS headers
@@ -157,7 +150,16 @@ func (s *EventStore) wrapEvent(event any) (*Event, error) {
 // without the data as an optimization for some use cases.
 func (s *EventStore) packEvent(subject string, event *Event) (*nats.Msg, error) {
 	// Marshal the data.
-	data, err := s.rt.types.Marshal(event.Data)
+	var (
+		data []byte
+		err  error
+	)
+
+	if s.rt.types == nil {
+		data, err = codec.Binary.Marshal(event.Data)
+	} else {
+		data, err = s.rt.types.Marshal(event.Data)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +184,17 @@ func (s *EventStore) packEvent(subject string, event *Event) (*nats.Msg, error) 
 func (s *EventStore) unpackEvent(msg *nats.Msg) (*Event, error) {
 	eventType := msg.Header.Get(eventTypeHdr)
 
-	data, err := s.rt.types.UnmarshalType(msg.Data, eventType)
+	var (
+		data interface{}
+		err  error
+	)
+	if s.rt.types == nil {
+		var b []byte
+		err = codec.Binary.Unmarshal(msg.Data, &b)
+		data = b
+	} else {
+		data, err = s.rt.types.UnmarshalType(msg.Data, eventType)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -321,7 +333,7 @@ func (s *EventStore) Load(ctx context.Context, subject string, opts ...LoadOptio
 // Append appends a user-defined event to the subject's event sequence. This will wrapped
 // within the Event type implicitly. Alternatively, a pre-wrapped *Event value can be passed.
 // It returns the resulting sequence number of the appended event.
-func (s *EventStore) Append(ctx context.Context, subject string, event any, opts ...AppendOption) (uint64, error) {
+func (s *EventStore) Append(ctx context.Context, subject string, event *Event, opts ...AppendOption) (uint64, error) {
 	// Configure opts.
 	var o appendOpts
 	for _, opt := range opts {
