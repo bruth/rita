@@ -10,6 +10,10 @@ var (
 
 type msgpackCodec struct{}
 
+func (*msgpackCodec) Name() string {
+	return "msgpack"
+}
+
 func (*msgpackCodec) Marshal(v interface{}) ([]byte, error) {
 	return msgpack.Marshal(v)
 }

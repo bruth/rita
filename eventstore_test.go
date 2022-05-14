@@ -164,3 +164,35 @@ func TestEventStore(t *testing.T) {
 		})
 	}
 }
+
+func TestNoRegistry(t *testing.T) {
+	is := testutil.NewIs(t)
+
+	srv := testutil.NewNatsServer()
+	defer testutil.ShutdownNatsServer(srv)
+
+	nc, _ := nats.Connect(srv.ClientURL())
+
+	r, err := New(nc)
+	is.NoErr(err)
+
+	es, err := r.EventStores.Create(&EventStoreConfig{
+		Name:    "orders",
+		Storage: nats.MemoryStorage,
+	})
+	is.NoErr(err)
+
+	ctx := context.Background()
+
+	seq, err := es.Append(ctx, "orders.1", &Event{
+		Type: "foo",
+		Data: []byte("hello"),
+	})
+	is.NoErr(err)
+	is.Equal(seq, uint64(1))
+
+	events, _, err := es.Load(ctx, "orders.1")
+	is.NoErr(err)
+	is.Equal(events[0].Type, "foo")
+	is.Equal(events[0].Data, []byte("hello"))
+}

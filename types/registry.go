@@ -47,12 +47,12 @@ type RegistryOption interface {
 // Codec is a registry option to define the desired serialization codec.
 func Codec(name string) RegistryOption {
 	return registryOption(func(o *Registry) error {
-		c, err := codec.Registry.Get(name)
-		if err != nil {
-			return err
+		c, ok := codec.Codecs[name]
+		if !ok {
+			return fmt.Errorf("%w: %s", codec.ErrCodecNotRegistered, name)
 		}
+
 		o.codec = c
-		o.codecName = name
 		return nil
 	})
 }
@@ -68,12 +68,10 @@ type Registry struct {
 
 	// Reflection type to the type name.
 	rtypes map[reflect.Type]string
-
-	codecName string
 }
 
-func (r *Registry) Codec() string {
-	return r.codecName
+func (r *Registry) Codec() codec.Codec {
+	return r.codec
 }
 
 func (r *Registry) validate(name string, typ *Type) error {
@@ -104,11 +102,9 @@ func (r *Registry) validate(name string, typ *Type) error {
 	}
 
 	// Ensure that the pointer value is a struct type.
-	/*
-		if rt.Elem().Kind() != reflect.Struct {
-			return fmt.Errorf("%w: %s: value type must be a struct", ErrTypeNotValid, name)
-		}
-	*/
+	if rt.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("%w: %s: value type must be a struct", ErrTypeNotValid, name)
+	}
 
 	// Ensure [de]serialization works in the base case.
 	b, err := r.codec.Marshal(v)

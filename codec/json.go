@@ -8,6 +8,10 @@ var (
 
 type jsonCodec struct{}
 
+func (*jsonCodec) Name() string {
+	return "json"
+}
+
 func (*jsonCodec) Marshal(v interface{}) ([]byte, error) {
 	return json.Marshal(v)
 

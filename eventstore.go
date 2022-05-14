@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	eventTypeHdr       = "rita-event-type"
-	eventTimeHdr       = "rita-event-time"
-	eventCodecHdr      = "rita-event-codec"
+	eventTypeHdr       = "rita-type"
+	eventTimeHdr       = "rita-time"
+	eventCodecHdr      = "rita-codec"
 	eventMetaPrefixHdr = "rita-meta-"
 	eventTimeFormat    = time.RFC3339Nano
 )
@@ -151,14 +151,17 @@ func (s *EventStore) wrapEvent(event *Event) (*Event, error) {
 func (s *EventStore) packEvent(subject string, event *Event) (*nats.Msg, error) {
 	// Marshal the data.
 	var (
-		data []byte
-		err  error
+		data      []byte
+		err       error
+		codecName string
 	)
 
 	if s.rt.types == nil {
 		data, err = codec.Binary.Marshal(event.Data)
+		codecName = codec.Binary.Name()
 	} else {
 		data, err = s.rt.types.Marshal(event.Data)
+		codecName = s.rt.types.Codec().Name()
 	}
 	if err != nil {
 		return nil, err
@@ -171,7 +174,7 @@ func (s *EventStore) packEvent(subject string, event *Event) (*nats.Msg, error) 
 	msg.Header.Set(nats.MsgIdHdr, event.ID)
 	msg.Header.Set(eventTypeHdr, event.Type)
 	msg.Header.Set(eventTimeHdr, event.Time.Format(eventTimeFormat))
-	msg.Header.Set(eventCodecHdr, s.rt.types.Codec())
+	msg.Header.Set(eventCodecHdr, codecName)
 
 	for k, v := range event.Meta {
 		msg.Header.Set(fmt.Sprintf("%s%s", eventMetaPrefixHdr, k), v)
@@ -183,17 +186,30 @@ func (s *EventStore) packEvent(subject string, event *Event) (*nats.Msg, error) 
 // unpackEvent unpacks an Event from a NATS message.
 func (s *EventStore) unpackEvent(msg *nats.Msg) (*Event, error) {
 	eventType := msg.Header.Get(eventTypeHdr)
+	codecName := msg.Header.Get(eventCodecHdr)
 
 	var (
 		data interface{}
 		err  error
 	)
+
+	c, ok := codec.Codecs[codecName]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", codec.ErrCodecNotRegistered, codecName)
+	}
+
+	// No type registry, so assume byte slice.
 	if s.rt.types == nil {
 		var b []byte
-		err = codec.Binary.Unmarshal(msg.Data, &b)
+		err = c.Unmarshal(msg.Data, &b)
 		data = b
 	} else {
-		data, err = s.rt.types.UnmarshalType(msg.Data, eventType)
+		v, err := s.rt.types.Init(eventType)
+		if err != nil {
+			return nil, err
+		}
+		err = c.Unmarshal(msg.Data, v)
+		data = v
 	}
 	if err != nil {
 		return nil, err

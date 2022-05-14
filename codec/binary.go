@@ -11,7 +11,11 @@ var (
 
 type binaryCodec struct{}
 
-func (c *binaryCodec) Marshal(v interface{}) ([]byte, error) {
+func (*binaryCodec) Name() string {
+	return "binary"
+}
+
+func (*binaryCodec) Marshal(v interface{}) ([]byte, error) {
 	// Check for native implementation.
 	if m, ok := v.(encoding.BinaryMarshaler); ok {
 		return m.MarshalBinary()
@@ -26,7 +30,7 @@ func (c *binaryCodec) Marshal(v interface{}) ([]byte, error) {
 	return b, nil
 }
 
-func (c *binaryCodec) Unmarshal(b []byte, v interface{}) error {
+func (*binaryCodec) Unmarshal(b []byte, v interface{}) error {
 	// Check for native implementation.
 	if u, ok := v.(encoding.BinaryUnmarshaler); ok {
 		return u.UnmarshalBinary(b)

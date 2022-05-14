@@ -12,6 +12,10 @@ var (
 
 type protoBufCodec struct{}
 
+func (*protoBufCodec) Name() string {
+	return "protobuf"
+}
+
 func (*protoBufCodec) Marshal(v interface{}) ([]byte, error) {
 	m, ok := v.(proto.Message)
 	if !ok {
