@@ -10,11 +10,11 @@ import (
 )
 
 var (
-	ErrTypeNotValid      = errors.New("type not valid")
-	ErrTypeNotRegistered = errors.New("type not registered")
-	ErrNoTypeForStruct   = errors.New("no type for struct")
-	ErrMarshal           = errors.New("marshal error")
-	ErrUnmarshal         = errors.New("unmarshal error")
+	ErrTypeNotValid      = errors.New("rita: type not valid")
+	ErrTypeNotRegistered = errors.New("rita: type not registered")
+	ErrNoTypeForStruct   = errors.New("rita: no type for struct")
+	ErrMarshal           = errors.New("rita: marshal error")
+	ErrUnmarshal         = errors.New("rita: unmarshal error")
 
 	nameRegex = regexp.MustCompile(`^[\w-]+(\.[\w-]+)*$`)
 )

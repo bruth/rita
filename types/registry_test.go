@@ -69,9 +69,9 @@ func TestMarshalUnmarshal(t *testing.T) {
 		},
 	}
 
-	for _, k := range codec.Codecs {
-		t.Run(k, func(t *testing.T) {
-			rt, err := NewRegistry(ty, Codec(k))
+	for _, c := range codec.Codecs {
+		t.Run(c.Name(), func(t *testing.T) {
+			rt, err := NewRegistry(ty, Codec(c.Name()))
 			is.NoErr(err)
 
 			v1 := pb.A{

@@ -18,6 +18,7 @@ type RitaOption interface {
 	addOption(o *Rita) error
 }
 
+// TypeRegistry sets an explicit type registry.
 func TypeRegistry(types *types.Registry) RitaOption {
 	return ritaOption(func(o *Rita) error {
 		o.types = types
@@ -25,6 +26,7 @@ func TypeRegistry(types *types.Registry) RitaOption {
 	})
 }
 
+// Clock sets a clock implementation. Default it clock.Time.
 func Clock(clock clock.Clock) RitaOption {
 	return ritaOption(func(o *Rita) error {
 		o.clock = clock
@@ -32,6 +34,7 @@ func Clock(clock clock.Clock) RitaOption {
 	})
 }
 
+// ID sets a unique ID generator implementation. Default is id.NUID.
 func ID(id id.ID) RitaOption {
 	return ritaOption(func(o *Rita) error {
 		o.id = id
@@ -40,8 +43,6 @@ func ID(id id.ID) RitaOption {
 }
 
 type Rita struct {
-	EventStores *EventStoreManager
-
 	nc *nats.Conn
 	js nats.JetStreamContext
 
@@ -50,7 +51,14 @@ type Rita struct {
 	types *types.Registry
 }
 
-// New initializes a new Rita instance given a NATS connection and the type registry.
+func (r *Rita) EventStore(name string) *EventStore {
+	return &EventStore{
+		name: name,
+		rt:   r,
+	}
+}
+
+// New initializes a new Rita instance with a NATS connection.
 func New(nc *nats.Conn, opts ...RitaOption) (*Rita, error) {
 	js, err := nc.JetStream()
 	if err != nil {
@@ -68,10 +76,6 @@ func New(nc *nats.Conn, opts ...RitaOption) (*Rita, error) {
 		if err := o.addOption(rt); err != nil {
 			return nil, err
 		}
-	}
-
-	rt.EventStores = &EventStoreManager{
-		rt: rt,
 	}
 
 	return rt, nil

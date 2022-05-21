@@ -91,15 +91,15 @@ events, lastSeq, err := es.Load("orders.1")
 
 The `lastSeq` value indicates the sequence of the last event appended for this subject. If a new event needs to be appended, this should be used with `ExpectSequence`.
 
-### Views
+### State
 
-Although event sourcing involves modeling and persisting the state transitions as events, we still need to compute _state_ in order to make decisions when commands are received.
+Although event sourcing involves modeling and persisting the state transitions as events, we still need to derive _state_ in order to make decisions when commands are received.
 
 Fundamentally, we have a model of state, and then we need to evolve the state given each event. We can model this as an interface in Go.
 
 ```go
-type View interface {
-  Evolve(event any) error
+type Evolver interface {
+  Evolve(event *Event) error
 }
 ```
 
@@ -110,50 +110,62 @@ type Order struct {
   // fields..
 }
 
-func (o *Order) Evolve(event any) error {
-  // Switch on the event type and evolve the state.
-  switch e := event.(type) {
+func (o *Order) Evolve(event *Event) error {
+  // Switch on the event type or data (if using the type registry).
+  switch e := event.Data.(type) {
   }
 }
 ```
 
-Given this model, we can use the `View` method on `EventStore` for convenience.
+Given this model, we can use the `Evolve` method on `EventStore` for convenience.
 
 ```go
 var order Order
-lastSeq, err = es.View("orders.1", &order)
+lastSeq, err = es.Evolve("orders.1", &order)
 ```
 
-This also works for a cross-cutting view (all orders) using a subject wildcard.
+This also works for a cross-cutting state (all orders) using a subject wildcard.
 
 ```go
 var orderList OrderList
-lastSeq, err = es.View("orders.*", &orderlist)
+lastSeq, err = es.Evolve("orders.*", &orderlist)
 ```
+
+#### Long-lived state
+
+It may be desirable to keep some state in memory for a period of time and then only request _new_ events that have occurred since the state was created previously.
+
+This can be achieved by simply passing the same state value (already evolved) along with `rita.AfterSequence(lastSeq)` option.
+
+```go
+lastSeq, err = es.Evolve("orders.1", &order, rita.AfterSequence(lastSeq))
+```
+
+This will only fetch the events after the last event that was received previously and evolve the state up to the latest known event.
 
 ## Planned Features
 
-- [x] type registry (beta)
+*Although features are checked off, they are all in a pre-1.0 state and subject to change.*
+
+- [x] type registry
   - transparent mapping from string to type
   - support for labeling types, event, state, command, etc.
-  - encoder to/decoder from nats message
-- [x] event store (alpha)
+- [x] event store
   - layer on JetStream for event store
+  - encoder to/decoder from nats message
   - simple api with event store semantics
   - each store maps to one stream
-- [ ] event-sourced state (in progress)
+- [x] event-sourced state
   - model for event-sourced state representations
   - interface for user-implemented type
   - maps to a subject
-  - snapshot or state up to some sequence/time or live-updating
-- [ ] command deciders (next)
+  - snapshot or state up to some sequence for on-demand updates
+- [ ] command deciders
   - model for handling commands and emitting events
   - provide consistency boundary for state transitions
   - state is event-sourced, single subject or wildcard (with concurrency detection)
-- [ ] state store (next)
-  - leverage KV or Object Store for state snapshots
-  - store snapshot of an event-sourced state as of a sequence
-  - requires a key, subject might be sufficient
+- [ ] state store
+  - leverage JetStream KV or Object Store for state persistence
 - [ ] timers and tickers
   - set a schedule or a time that will publish a message on a subject
   - use stream with max messages per subject + interest policy

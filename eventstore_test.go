@@ -11,16 +11,63 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-func TestEventStore(t *testing.T) {
+type OrderPlaced struct {
+	ID string
+}
+
+type OrderShipped struct {
+	ID string
+}
+
+type OrderStats struct {
+	OrdersPlaced  int
+	OrdersShipped int
+}
+
+func (s *OrderStats) Evolve(event *Event) error {
+	switch event.Data.(type) {
+	case *OrderPlaced:
+		s.OrdersPlaced++
+	case *OrderShipped:
+		s.OrdersShipped++
+	}
+	return nil
+}
+
+func TestEventStoreNoRegistry(t *testing.T) {
 	is := testutil.NewIs(t)
 
-	type OrderPlaced struct {
-		ID string
-	}
+	srv := testutil.NewNatsServer()
+	defer testutil.ShutdownNatsServer(srv)
 
-	type OrderShipped struct {
-		ID string
-	}
+	nc, _ := nats.Connect(srv.ClientURL())
+
+	r, err := New(nc)
+	is.NoErr(err)
+
+	es := r.EventStore("orders")
+	err = es.Create(&EventStoreConfig{
+		Storage: nats.MemoryStorage,
+	})
+	is.NoErr(err)
+
+	ctx := context.Background()
+
+	seq, err := es.Append(ctx, "orders.1", []*Event{{
+		Type: "foo",
+		Data: []byte("hello"),
+	}})
+	is.NoErr(err)
+	is.Equal(seq, uint64(1))
+
+	events, _, err := es.Load(ctx, "orders.1")
+	is.NoErr(err)
+	is.Equal(events[0].Type, "foo")
+	is.Equal(events[0].Data, []byte("hello"))
+}
+
+func TestEventStoreWithRegistry(t *testing.T) {
+	is := testutil.NewIs(t)
 
 	tests := []struct {
 		Name string
@@ -31,9 +78,9 @@ func TestEventStore(t *testing.T) {
 			func(t *testing.T, es *EventStore, subject string) {
 				ctx := context.Background()
 				devent := OrderPlaced{ID: "123"}
-				seq, err := es.Append(ctx, subject, &Event{
+				seq, err := es.Append(ctx, subject, []*Event{{
 					Data: &devent,
-				})
+				}})
 				is.NoErr(err)
 				is.Equal(seq, uint64(1))
 
@@ -63,7 +110,7 @@ func TestEventStore(t *testing.T) {
 					},
 				}
 
-				seq, err := es.Append(ctx, subject, event1, ExpectSequence(0))
+				seq, err := es.Append(ctx, subject, []*Event{event1}, ExpectSequence(0))
 				is.NoErr(err)
 				is.Equal(seq, uint64(1))
 
@@ -71,7 +118,7 @@ func TestEventStore(t *testing.T) {
 					Data: &OrderShipped{ID: "123"},
 				}
 
-				seq, err = es.Append(ctx, subject, event2, ExpectSequence(1))
+				seq, err = es.Append(ctx, subject, []*Event{event2}, ExpectSequence(1))
 				is.NoErr(err)
 				is.Equal(seq, uint64(2))
 
@@ -87,11 +134,11 @@ func TestEventStore(t *testing.T) {
 			func(t *testing.T, es *EventStore, subject string) {
 				ctx := context.Background()
 
-				seq, err := es.Append(ctx, subject, &Event{Data: &OrderPlaced{ID: "123"}}, ExpectSequence(0))
+				seq, err := es.Append(ctx, subject, []*Event{{Data: &OrderPlaced{ID: "123"}}}, ExpectSequence(0))
 				is.NoErr(err)
 				is.Equal(seq, uint64(1))
 
-				seq, err = es.Append(ctx, subject, &Event{Data: &OrderShipped{ID: "123"}}, ExpectSequence(1))
+				seq, err = es.Append(ctx, subject, []*Event{{Data: &OrderShipped{ID: "123"}}}, ExpectSequence(1))
 				is.NoErr(err)
 				is.Equal(seq, uint64(2))
 
@@ -113,19 +160,57 @@ func TestEventStore(t *testing.T) {
 					Data: &OrderPlaced{ID: "123"},
 				}
 
-				seq, err := es.Append(ctx, subject, e)
+				seq, err := es.Append(ctx, subject, []*Event{e})
 				is.NoErr(err)
 				is.Equal(seq, uint64(1))
 
 				// Append same event with same ID, expect the same response.
-				seq, err = es.Append(ctx, subject, e)
+				seq, err = es.Append(ctx, subject, []*Event{e})
 				is.NoErr(err)
 				is.Equal(seq, uint64(1))
 
 				// Append same event with same ID, expect the same response... again.
-				seq, err = es.Append(ctx, subject, e)
+				seq, err = es.Append(ctx, subject, []*Event{e})
 				is.NoErr(err)
 				is.Equal(seq, uint64(1))
+			},
+		},
+		{
+			"state",
+			func(t *testing.T, es *EventStore, _ string) {
+				ctx := context.Background()
+
+				events := []*Event{
+					{Data: &OrderPlaced{ID: "1"}},
+					{Data: &OrderPlaced{ID: "2"}},
+					{Data: &OrderPlaced{ID: "3"}},
+					{Data: &OrderShipped{ID: "2"}},
+				}
+
+				seq, err := es.Append(ctx, "orders.*", events)
+				is.NoErr(err)
+				is.Equal(seq, uint64(4))
+
+				var stats OrderStats
+				seq2, err := es.Evolve(ctx, "orders.*", &stats)
+				is.NoErr(err)
+				is.Equal(seq, seq2)
+
+				is.Equal(stats.OrdersPlaced, 3)
+				is.Equal(stats.OrdersShipped, 1)
+
+				// New event to test out AfterSequence.
+				e5 := &Event{Data: &OrderShipped{ID: "1"}}
+				seq, err = es.Append(ctx, "orders.*", []*Event{e5})
+				is.NoErr(err)
+				is.Equal(seq, uint64(5))
+
+				seq2, err = es.Evolve(ctx, "orders.*", &stats, AfterSequence(seq2))
+				is.NoErr(err)
+				is.Equal(seq, seq2)
+
+				is.Equal(stats.OrdersPlaced, 3)
+				is.Equal(stats.OrdersShipped, 2)
 			},
 		},
 	}
@@ -150,11 +235,11 @@ func TestEventStore(t *testing.T) {
 
 	for i, test := range tests {
 		t.Run(test.Name, func(t *testing.T) {
-			// Recreate the store for each test.
-			_ = r.EventStores.Delete("orders")
+			es := r.EventStore("orders")
 
-			es, err := r.EventStores.Create(&EventStoreConfig{
-				Name:    "orders",
+			// Recreate the store for each test.
+			_ = es.Delete()
+			err := es.Create(&EventStoreConfig{
 				Storage: nats.MemoryStorage,
 			})
 			is.NoErr(err)
@@ -163,36 +248,4 @@ func TestEventStore(t *testing.T) {
 			test.Run(t, es, subject)
 		})
 	}
-}
-
-func TestNoRegistry(t *testing.T) {
-	is := testutil.NewIs(t)
-
-	srv := testutil.NewNatsServer()
-	defer testutil.ShutdownNatsServer(srv)
-
-	nc, _ := nats.Connect(srv.ClientURL())
-
-	r, err := New(nc)
-	is.NoErr(err)
-
-	es, err := r.EventStores.Create(&EventStoreConfig{
-		Name:    "orders",
-		Storage: nats.MemoryStorage,
-	})
-	is.NoErr(err)
-
-	ctx := context.Background()
-
-	seq, err := es.Append(ctx, "orders.1", &Event{
-		Type: "foo",
-		Data: []byte("hello"),
-	})
-	is.NoErr(err)
-	is.Equal(seq, uint64(1))
-
-	events, _, err := es.Load(ctx, "orders.1")
-	is.NoErr(err)
-	is.Equal(events[0].Type, "foo")
-	is.Equal(events[0].Data, []byte("hello"))
 }
