@@ -260,12 +260,12 @@ func (s *EventStore) unpackEvent(msg *nats.Msg) (*Event, error) {
 		err = c.Unmarshal(msg.Data, &b)
 		data = b
 	} else {
-		v, err := s.rt.types.Init(eventType)
-		if err != nil {
-			return nil, err
+		var v any
+		v, err = s.rt.types.Init(eventType)
+		if err == nil {
+			err = c.Unmarshal(msg.Data, v)
+			data = v
 		}
-		err = c.Unmarshal(msg.Data, v)
-		data = v
 	}
 	if err != nil {
 		return nil, err
