@@ -12,27 +12,39 @@ var (
 // time.
 type Clock struct {
 	Start time.Time
-	Unit  time.Duration
+	unit  time.Duration
 	last  time.Time
-	count int
 }
 
 // Now implements clock.Clock.
 func (c *Clock) Now() time.Time {
-	c.last = c.Start.Add(time.Duration(c.count) * c.Unit)
-	c.count++
+	if c.last.IsZero() {
+		c.last = c.Start
+	} else {
+		c.last = c.last.Add(c.unit)
+	}
+	return c.last
+}
+
+func (c *Clock) Add(d time.Duration) time.Time {
+	if c.last.IsZero() {
+		c.last = c.Start
+	}
+	c.last = c.last.Add(d)
 	return c.last
 }
 
 // Last returns the last time that was used.
 func (c *Clock) Last() time.Time {
+	if c.last.IsZero() {
+		c.last = c.Start
+	}
 	return c.last
 }
 
 func NewClock(unit time.Duration) *Clock {
 	return &Clock{
 		Start: defaultStartTime,
-		Unit:  unit,
-		last:  defaultStartTime,
+		unit:  unit,
 	}
 }
