@@ -239,8 +239,8 @@ func (s *EventStore) packEvent(subject string, event *Event) (*nats.Msg, error) 
 	return msg, nil
 }
 
-// unpackEvent unpacks an Event from a NATS message.
-func (s *EventStore) unpackEvent(msg *nats.Msg) (*Event, error) {
+// UnpackEvent unpacks an Event from a NATS message.
+func (s *EventStore) UnpackEvent(msg *nats.Msg) (*Event, error) {
 	eventType := msg.Header.Get(eventTypeHdr)
 	codecName := msg.Header.Get(eventCodecHdr)
 
@@ -388,7 +388,7 @@ func (s *EventStore) Load(ctx context.Context, subject string, opts ...LoadOptio
 			return nil, 0, err
 		}
 
-		event, err := s.unpackEvent(msg)
+		event, err := s.UnpackEvent(msg)
 		if err != nil {
 			return nil, 0, err
 		}
