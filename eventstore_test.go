@@ -37,7 +37,7 @@ func (s *OrderStats) Evolve(event *Event) error {
 func TestEventStoreNoRegistry(t *testing.T) {
 	is := testutil.NewIs(t)
 
-	srv := testutil.NewNatsServer()
+	srv := testutil.NewNatsServer(-1)
 	defer testutil.ShutdownNatsServer(srv)
 
 	nc, _ := nats.Connect(srv.ClientURL())
@@ -215,7 +215,7 @@ func TestEventStoreWithRegistry(t *testing.T) {
 		},
 	}
 
-	srv := testutil.NewNatsServer()
+	srv := testutil.NewNatsServer(-1)
 	defer testutil.ShutdownNatsServer(srv)
 
 	nc, _ := nats.Connect(srv.ClientURL())

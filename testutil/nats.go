@@ -7,9 +7,9 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/test"
 )
 
-func NewNatsServer() *server.Server {
+func NewNatsServer(port int) *server.Server {
 	opts := natsserver.DefaultTestOptions
-	opts.Port = -1
+	opts.Port = port
 	opts.JetStream = true
 	return natsserver.RunServer(&opts)
 }
