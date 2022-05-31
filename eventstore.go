@@ -239,68 +239,6 @@ func (s *EventStore) packEvent(subject string, event *Event) (*nats.Msg, error) 
 	return msg, nil
 }
 
-// UnpackEvent unpacks an Event from a NATS message.
-func (s *EventStore) UnpackEvent(msg *nats.Msg) (*Event, error) {
-	eventType := msg.Header.Get(eventTypeHdr)
-	codecName := msg.Header.Get(eventCodecHdr)
-
-	var (
-		data interface{}
-		err  error
-	)
-
-	c, ok := codec.Codecs[codecName]
-	if !ok {
-		return nil, fmt.Errorf("%w: %s", codec.ErrCodecNotRegistered, codecName)
-	}
-
-	// No type registry, so assume byte slice.
-	if s.rt.types == nil {
-		var b []byte
-		err = c.Unmarshal(msg.Data, &b)
-		data = b
-	} else {
-		var v any
-		v, err = s.rt.types.Init(eventType)
-		if err == nil {
-			err = c.Unmarshal(msg.Data, v)
-			data = v
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	md, err := msg.Metadata()
-	if err != nil {
-		return nil, fmt.Errorf("unpack: failed to get metadata: %s", err)
-	}
-
-	eventTime, err := time.Parse(eventTimeFormat, msg.Header.Get(eventTimeHdr))
-	if err != nil {
-		return nil, fmt.Errorf("unpack: failed to parse event time: %s", err)
-	}
-
-	meta := make(map[string]string)
-
-	for h := range msg.Header {
-		if strings.HasPrefix(h, eventMetaPrefixHdr) {
-			key := h[len(eventMetaPrefixHdr):]
-			meta[key] = msg.Header.Get(h)
-		}
-	}
-
-	return &Event{
-		ID:       msg.Header.Get(nats.MsgIdHdr),
-		Type:     msg.Header.Get(eventTypeHdr),
-		Time:     eventTime,
-		Data:     data,
-		Meta:     meta,
-		Sequence: md.Sequence.Stream,
-		Subject:  msg.Subject,
-	}, nil
-}
-
 // lastSeqForSubject queries the JS API to identify the current latest sequence for a subject.
 // This is used as an best-guess indicator of the current end of the even history.
 func (s *EventStore) lastMsgForSubject(ctx context.Context, subject string) (*natsStoredMsg, error) {
@@ -388,7 +326,7 @@ func (s *EventStore) Load(ctx context.Context, subject string, opts ...LoadOptio
 			return nil, 0, err
 		}
 
-		event, err := s.UnpackEvent(msg)
+		event, err := s.rt.UnpackEvent(msg)
 		if err != nil {
 			return nil, 0, err
 		}

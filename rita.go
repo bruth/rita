@@ -1,7 +1,12 @@
 package rita
 
 import (
+	"fmt"
+	"strings"
+	"time"
+
 	"github.com/bruth/rita/clock"
+	"github.com/bruth/rita/codec"
 	"github.com/bruth/rita/id"
 	"github.com/bruth/rita/types"
 	"github.com/nats-io/nats.go"
@@ -49,6 +54,75 @@ type Rita struct {
 	id    id.ID
 	clock clock.Clock
 	types *types.Registry
+}
+
+// UnpackEvent unpacks an Event from a NATS message.
+func (r *Rita) UnpackEvent(msg *nats.Msg) (*Event, error) {
+	eventType := msg.Header.Get(eventTypeHdr)
+	codecName := msg.Header.Get(eventCodecHdr)
+
+	var (
+		data interface{}
+		err  error
+	)
+
+	c, ok := codec.Codecs[codecName]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", codec.ErrCodecNotRegistered, codecName)
+	}
+
+	// No type registry, so assume byte slice.
+	if r.types == nil {
+		var b []byte
+		err = c.Unmarshal(msg.Data, &b)
+		data = b
+	} else {
+		var v any
+		v, err = r.types.Init(eventType)
+		if err == nil {
+			err = c.Unmarshal(msg.Data, v)
+			data = v
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var seq uint64
+	// If this message is not from a native JS subscription, the reply will not
+	// be set. This is where metadata is parsed from. In cases where a message is
+	// re-published, we don't want to fail if we can't get the sequence.
+	if msg.Reply != "" {
+		md, err := msg.Metadata()
+		if err != nil {
+			return nil, fmt.Errorf("unpack: failed to get metadata: %s", err)
+		}
+		seq = md.Sequence.Stream
+	}
+
+	eventTime, err := time.Parse(eventTimeFormat, msg.Header.Get(eventTimeHdr))
+	if err != nil {
+		return nil, fmt.Errorf("unpack: failed to parse event time: %s", err)
+	}
+
+	meta := make(map[string]string)
+
+	for h := range msg.Header {
+		if strings.HasPrefix(h, eventMetaPrefixHdr) {
+			key := h[len(eventMetaPrefixHdr):]
+			meta[key] = msg.Header.Get(h)
+		}
+	}
+
+	return &Event{
+		ID:       msg.Header.Get(nats.MsgIdHdr),
+		Type:     msg.Header.Get(eventTypeHdr),
+		Time:     eventTime,
+		Data:     data,
+		Meta:     meta,
+		Subject:  msg.Subject,
+		Sequence: seq,
+	}, nil
 }
 
 func (r *Rita) EventStore(name string) *EventStore {
