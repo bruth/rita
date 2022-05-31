@@ -310,6 +310,7 @@ func (s *EventStore) Load(ctx context.Context, subject string, opts ...LoadOptio
 	if err != nil {
 		return nil, 0, err
 	}
+	defer sub.Unsubscribe() //nolint
 
 	// Skip first.
 	if o.afterSeq != nil {
