@@ -136,22 +136,6 @@ type natsStoredMsg struct {
 	Sequence uint64 `json:"seq"`
 }
 
-// EventStoreConfig is a subset of the nats.StreamConfig for the purpose of creating
-// purpose-built streams for an event store.
-type EventStoreConfig struct {
-	// Description associated with the event store.
-	Description string
-	// Subjects to associated with the stream. If not specified, it will default to
-	// the name plus the variadic wildcard, e.g. "orders.>"
-	Subjects []string
-	// Storage for the stream.
-	Storage nats.StorageType
-	// Replicas of the stream.
-	Replicas int
-	// Placement of the stream replicas.
-	Placement *nats.Placement
-}
-
 // EventStore provides event store semantics over a NATS stream.
 type EventStore struct {
 	name string
@@ -410,41 +394,27 @@ func (s *EventStore) Evolve(ctx context.Context, subject string, model Evolver, 
 
 // Create creates the event store given the configuration. The stream
 // name is the name of the store and the subjects default to "{name}}.>".
-func (s *EventStore) Create(config *EventStoreConfig) error {
+func (s *EventStore) Create(config *nats.StreamConfig) error {
 	if config == nil {
-		config = &EventStoreConfig{}
+		config = &nats.StreamConfig{}
+	}
+	config.Name = s.name
+
+	if len(config.Subjects) == 0 {
+		config.Subjects = []string{fmt.Sprintf("%s.>", s.name)}
 	}
 
-	subjects := config.Subjects
-	if len(subjects) == 0 {
-		subjects = []string{fmt.Sprintf("%s.>", s.name)}
-	}
-
-	_, err := s.rt.js.AddStream(&nats.StreamConfig{
-		Name:        s.name,
-		Description: config.Description,
-		Subjects:    subjects,
-		Storage:     config.Storage,
-		Replicas:    config.Replicas,
-		Placement:   config.Placement,
-		DenyDelete:  true,
-		DenyPurge:   true,
-	})
+	_, err := s.rt.js.AddStream(config)
 	return err
 }
 
 // Update updates the event store configuration.
-func (s *EventStore) Update(config *EventStoreConfig) error {
-	_, err := s.rt.js.UpdateStream(&nats.StreamConfig{
-		Name:        s.name,
-		Description: config.Description,
-		Subjects:    config.Subjects,
-		Storage:     config.Storage,
-		Replicas:    config.Replicas,
-		Placement:   config.Placement,
-		DenyDelete:  true,
-		DenyPurge:   true,
-	})
+func (s *EventStore) Update(config *nats.StreamConfig) error {
+	if config == nil {
+		config = &nats.StreamConfig{}
+	}
+	config.Name = s.name
+	_, err := s.rt.js.UpdateStream(config)
 	return err
 }
 

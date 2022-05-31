@@ -46,7 +46,7 @@ func TestEventStoreNoRegistry(t *testing.T) {
 	is.NoErr(err)
 
 	es := r.EventStore("orders")
-	err = es.Create(&EventStoreConfig{
+	err = es.Create(&nats.StreamConfig{
 		Storage: nats.MemoryStorage,
 	})
 	is.NoErr(err)
@@ -239,7 +239,7 @@ func TestEventStoreWithRegistry(t *testing.T) {
 
 			// Recreate the store for each test.
 			_ = es.Delete()
-			err := es.Create(&EventStoreConfig{
+			err := es.Create(&nats.StreamConfig{
 				Storage: nats.MemoryStorage,
 			})
 			is.NoErr(err)
