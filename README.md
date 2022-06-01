@@ -1,7 +1,7 @@
 # Rita
 
 
-Rita is a toolkit of various event-centric and reactive abstractions build on top of NATS.
+Rita is a toolkit of various event-centric and reactive abstractions build on top of [NATS](https://nats.io).
 
 **NOTE: This package is under heavy development, so breaking changes will likely be introduced. Feedback is welcome on API design and scope. Please open an issue if you have something to share!**
 
@@ -24,6 +24,8 @@ go get github.com/bruth/rita
 ```
 
 ## Usage
+
+*See the [blog post](https://www.byronruth.com/implementing-an-event-store-on-nats-part-2/) that introduces the initial design of Rita.*
 
 ### Type Registry
 
@@ -64,23 +66,31 @@ r, err := rita.New(nc, rita.TypeRegistry(tr))
 Create an event store for orders. This will default to a subject of `orders.>`. *Note, other than a few different defaults to follow the semantics of an event store, the stream is just an vanilla JetStream and can be managed as such.*
 
 ```go
-es, err := r.CreateEventStore(&rita.EventStoreConfig{
-  Name: "orders",
+// Get a handle to the event store with a name.
+es := r.EventStore("orders")
+
+// Create the store by providing a stream config. By default, the bound
+// subject will be "orders.>". This operation is idempotent, so it can be
+// safely during application startup time.
+err := Create(&nats.StreamConfig{
   Replicas: 3,
 })
 ```
 
-Append an event to the `orders.1` subject on the stream. The _event_ can be a registered value or an `*Event` value. `ExpectSequence` can be set to zero means no other
-events should be associated with this subject yet.
+Append an event to the `orders.1` subject on the stream. `ExpectSequence` can be set to zero means no other events should be associated with this subject yet.
 
 ```go
-seq1, err := es.Append("orders.1", &OrderPlaced{}, rita.ExpectSequence(0))
+seq1, err := es.Append("orders.1", []*rita.Event{
+    {Data: &OrderPlaced{}},
+}, rita.ExpectSequence(0))
 ```
 
 Append an another event, using the previously returned sequence.
 
 ```go
-seq2, err := es.Append("orders.1", &OrderShipped{}, rita.ExpectSequence(seq1))
+seq2, err := es.Append("orders.1", []*rita.Event{
+    {Data: &OrderShipped{}},
+rita.ExpectSequence(seq1))
 ```
 
 Load the events for the subject. This returns a slice of `*Event` values where the `Data` value for each event has been pre-allocated based on the `Type` using the registry.
