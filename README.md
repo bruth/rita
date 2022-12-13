@@ -72,7 +72,7 @@ es := r.EventStore("orders")
 // Create the store by providing a stream config. By default, the bound
 // subject will be "orders.>". This operation is idempotent, so it can be
 // safely during application startup time.
-err := Create(&nats.StreamConfig{
+err := es.Create(&nats.StreamConfig{
   Replicas: 3,
 })
 ```
